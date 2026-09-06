@@ -170,6 +170,17 @@ this portfolio's fleet. HSE-specific implementation notes:
   to something else) - that would require storing full prior snapshots
   and diffing them, a materially bigger feature deferred for now and
   disclosed in the README's Known Limitations.
+- **Cloud eventual-consistency note** (found during cloud verification,
+  2026-09-06): two `apify actors call` runs fired ~12 seconds apart
+  (cold seed, then an immediate `onlyNew` run) did NOT see each other's
+  state - the second run walked all 5 requested pages as if cold. A
+  third run ~90 seconds after the seed run correctly loaded the state
+  and stopped early. This reads as the platform's named-KV-store write
+  needing a short propagation window before it's reliably visible to a
+  freshly-started container, not a bug in `state.ts` - real scheduled
+  monitoring runs are spaced hours/days apart and won't hit this, but
+  don't be alarmed by a "why didn't it dedupe" result if you stress-test
+  two runs back-to-back within seconds.
 - `dateRange` filters on the record's own natural date field (Offence
   Date for convictions, served-on date for notices) via
   `src/dateFilter.ts`'s `parseUkDate` (DD/MM/YYYY, the format both fields
