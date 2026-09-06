@@ -1,0 +1,104 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "actorSpecification": 1,
+    "title": "Dataset Schema",
+    "fields": {
+        "type": "object",
+        "properties": {
+            "recordType": { "title": "Record Type", "type": "string", "description": "conviction or notice" },
+            "caseNumber": { "title": "Case Number", "type": ["string", "null"], "description": "Convictions only" },
+            "noticeNumber": { "title": "Notice Number", "type": ["string", "null"], "description": "Notices only" },
+            "defendantName": {
+                "title": "Defendant Name",
+                "type": ["string", "null"],
+                "description": "Convictions only"
+            },
+            "defendantId": { "title": "Defendant ID", "type": ["string", "null"] },
+            "recipientName": { "title": "Recipient Name", "type": ["string", "null"], "description": "Notices only" },
+            "recipientId": { "title": "Recipient ID", "type": ["string", "null"] },
+            "noticeType": {
+                "title": "Notice Type",
+                "type": ["string", "null"],
+                "description": "Improvement / Prohibition - notices only"
+            },
+            "description": { "title": "Description", "type": ["string", "null"] },
+            "offenceDate": { "title": "Offence Date", "type": ["string", "null"], "description": "Convictions only" },
+            "servedDate": { "title": "Served Date", "type": ["string", "null"], "description": "Notices only" },
+            "complianceDate": { "title": "Compliance Date", "type": ["string", "null"], "description": "Notices only" },
+            "revisedComplianceDate": {
+                "title": "Revised Compliance Date",
+                "type": ["string", "null"],
+                "description": "Notices only"
+            },
+            "result": { "title": "Result", "type": ["string", "null"], "description": "Notices only" },
+            "totalFine": { "title": "Total Fine", "type": ["string", "null"], "description": "Convictions only" },
+            "totalCosts": {
+                "title": "Total Costs Awarded to HSE",
+                "type": ["string", "null"],
+                "description": "Convictions only"
+            },
+            "address": { "title": "Address", "type": ["string", "null"] },
+            "region": { "title": "Region", "type": ["string", "null"] },
+            "localAuthority": { "title": "Local Authority", "type": ["string", "null"] },
+            "industry": { "title": "Industry", "type": ["string", "null"] },
+            "mainActivity": { "title": "Main Activity", "type": ["string", "null"] },
+            "typeOfLocation": { "title": "Type of Location", "type": ["string", "null"] },
+            "hseGroup": { "title": "HSE Group", "type": ["string", "null"] },
+            "hseDirectorate": { "title": "HSE Directorate", "type": ["string", "null"] },
+            "hseArea": { "title": "HSE Area", "type": ["string", "null"] },
+            "hseDivision": { "title": "HSE Division", "type": ["string", "null"] },
+            "breaches": {
+                "title": "Breaches",
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "breachId": { "type": ["string", "null"] },
+                        "court": { "type": ["string", "null"] },
+                        "courtLevel": { "type": ["string", "null"] },
+                        "act": { "type": ["string", "null"] },
+                        "regulation": { "type": ["string", "null"] },
+                        "actOrRegulation": { "type": ["string", "null"] },
+                        "dateOfHearing": { "type": ["string", "null"] },
+                        "result": { "type": ["string", "null"] },
+                        "fine": { "type": ["string", "null"] }
+                    }
+                }
+            },
+            "detailUrl": { "title": "Detail URL", "type": "string" },
+            "scrapedAt": { "title": "Scraped at", "type": "string" }
+        }
+    },
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": [
+                    "recordType",
+                    "caseNumber",
+                    "noticeNumber",
+                    "defendantName",
+                    "recipientName",
+                    "offenceDate",
+                    "servedDate",
+                    "totalFine",
+                    "localAuthority"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "columns": [
+                    { "label": "Type", "format": "text", "field": "recordType" },
+                    { "label": "Case #", "format": "text", "field": "caseNumber" },
+                    { "label": "Notice #", "format": "text", "field": "noticeNumber" },
+                    { "label": "Defendant", "format": "text", "field": "defendantName" },
+                    { "label": "Recipient", "format": "text", "field": "recipientName" },
+                    { "label": "Offence Date", "format": "text", "field": "offenceDate" },
+                    { "label": "Served Date", "format": "text", "field": "servedDate" },
+                    { "label": "Fine", "format": "text", "field": "totalFine" },
+                    { "label": "Local Authority", "format": "text", "field": "localAuthority" }
+                ]
+            }
+        }
+    }
+}
