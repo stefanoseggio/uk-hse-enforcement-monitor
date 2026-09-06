@@ -29,6 +29,20 @@
             "description": "Hard cap on how many records to return per selected register this run (applied independently to Convictions and Notices, both sorted newest-first).",
             "default": 100,
             "minimum": 1
+        },
+        "onlyNew": {
+            "title": "Delta mode - only new records since last run",
+            "type": "boolean",
+            "description": "When enabled, persists seen record ids between runs (in this actor's own key-value store) and returns only records not seen in a prior run. Pagination stops as soon as it reaches already-seen records, so a scheduled daily/hourly run resolves in seconds instead of walking the whole register. Recommended for recurring monitoring; leave off for a full one-off extraction.",
+            "default": false
+        },
+        "dateRange": {
+            "title": "Filter by recency (source date field)",
+            "type": "string",
+            "description": "Optionally restrict results to records whose own date field (Offence Date for convictions, served-on date for notices) falls within this window. Independent of onlyNew - note that Offence Date can lag real publication by months, so onlyNew is the more reliable 'what's new' signal; use this filter when you specifically need the source's own date semantics.",
+            "editor": "select",
+            "enum": ["24h", "7d", "30d"],
+            "enumTitles": ["Last 24 hours", "Last 7 days", "Last 30 days"]
         }
     }
 }

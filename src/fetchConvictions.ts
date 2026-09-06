@@ -1,5 +1,7 @@
 import * as cheerio from 'cheerio';
 
+import type { DateRangePreset } from './dateFilter.js';
+import { isWithinDateRange, parseUkDate } from './dateFilter.js';
 import { fetchListingIds } from './fetchListingIds.js';
 import { fetchWithRetry } from './http.js';
 import { allHrefsMatching, extractIdParam, parseLabelValueRows } from './parsers/labelValueTable.js';
@@ -22,7 +24,12 @@ async function fetchBreach(breachId: string): Promise<ConvictionBreach> {
     };
 }
 
-async function fetchConvictionDetail(caseNumber: string, fetchBreachDetail: boolean): Promise<ConvictionRecord> {
+async function fetchConvictionDetail(
+    caseNumber: string,
+    fetchBreachDetail: boolean,
+    isNew: boolean,
+    scrapedAt: string,
+): Promise<ConvictionRecord> {
     const path = convictionDetailPath(caseNumber);
     const html = await fetchWithRetry(path);
     const $ = cheerio.load(html);
@@ -72,16 +79,29 @@ async function fetchConvictionDetail(caseNumber: string, fetchBreachDetail: bool
         hseArea: fields['HSE Area'] || null,
         hseDivision: fields['HSE Division'] || null,
         breaches,
-        detailUrl: `https://resources.hse.gov.uk${path}`,
-        scrapedAt: new Date().toISOString(),
+        record_id: caseNumber,
+        event_type: 'SANCTION',
+        scraped_at: scrapedAt,
+        is_new: isNew,
+        source_url: `https://resources.hse.gov.uk${path}`,
     };
 }
 
-export async function fetchConvictions(maxItems: number, fetchBreachDetail: boolean): Promise<ConvictionRecord[]> {
-    const caseNumbers = await fetchListingIds('convictions', maxItems);
+export async function fetchConvictions(
+    maxItems: number,
+    fetchBreachDetail: boolean,
+    seenIds: ReadonlySet<string>,
+    onlyNew: boolean,
+    dateRange: DateRangePreset | undefined,
+    now: Date,
+): Promise<{ records: ConvictionRecord[]; allIdsThisRun: string[] }> {
+    const { ids: caseNumbers, allIdsThisRun } = await fetchListingIds('convictions', maxItems, seenIds, onlyNew);
+    const scrapedAt = now.toISOString();
     const records: ConvictionRecord[] = [];
     for (const caseNumber of caseNumbers) {
-        records.push(await fetchConvictionDetail(caseNumber, fetchBreachDetail));
+        const record = await fetchConvictionDetail(caseNumber, fetchBreachDetail, !seenIds.has(caseNumber), scrapedAt);
+        if (dateRange && !isWithinDateRange(parseUkDate(record.offenceDate), dateRange, now)) continue;
+        records.push(record);
     }
-    return records;
+    return { records, allIdsThisRun };
 }

@@ -1,9 +1,14 @@
+import type { DateRangePreset } from './dateFilter.js';
+
 export type DatasetName = 'convictions' | 'notices';
+export type EventType = 'NEW_LISTING' | 'SANCTION';
 
 export interface ActorInput {
     datasets: DatasetName[];
     fetchBreachDetail: boolean;
     maxItemsPerDataset: number;
+    onlyNew: boolean;
+    dateRange?: DateRangePreset;
 }
 
 export interface ConvictionBreach {
@@ -33,8 +38,13 @@ interface CommonFields {
     hseDirectorate: string | null;
     hseArea: string | null;
     hseDivision: string | null;
-    detailUrl: string;
-    scrapedAt: string;
+    // B2B integration metadata - standardized across this portfolio's fleet
+    // so downstream webhook/Zapier/Make consumers need no per-actor parser.
+    record_id: string;
+    event_type: EventType;
+    scraped_at: string;
+    is_new: boolean;
+    source_url: string;
 }
 
 export interface ConvictionRecord extends CommonFields {

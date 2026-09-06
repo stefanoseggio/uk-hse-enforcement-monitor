@@ -1,5 +1,7 @@
 import * as cheerio from 'cheerio';
 
+import type { DateRangePreset } from './dateFilter.js';
+import { isWithinDateRange, parseUkDate } from './dateFilter.js';
 import { fetchListingIds } from './fetchListingIds.js';
 import { fetchWithRetry } from './http.js';
 import { extractIdParam, firstHrefMatching, parseLabelValueRows } from './parsers/labelValueTable.js';
@@ -12,7 +14,12 @@ import { noticeBreachListPath, noticeDetailPath } from './urls.js';
 // the served date from a trailing "on DD/MM/YYYY". Verified live 2026-09-06.
 const SERVED_DATE_RE = /on (\d{2}\/\d{2}\/\d{4})\s*$/;
 
-async function fetchNoticeDetail(noticeNumber: string, fetchBreachDetail: boolean): Promise<NoticeRecord> {
+async function fetchNoticeDetail(
+    noticeNumber: string,
+    fetchBreachDetail: boolean,
+    isNew: boolean,
+    scrapedAt: string,
+): Promise<NoticeRecord> {
     const path = noticeDetailPath(noticeNumber);
     const html = await fetchWithRetry(path);
     const $ = cheerio.load(html);
@@ -51,16 +58,29 @@ async function fetchNoticeDetail(noticeNumber: string, fetchBreachDetail: boolea
         hseArea: fields['HSE Area'] || null,
         hseDivision: fields['HSE Division'] || null,
         breaches,
-        detailUrl: `https://resources.hse.gov.uk${path}`,
-        scrapedAt: new Date().toISOString(),
+        record_id: noticeNumber,
+        event_type: 'NEW_LISTING',
+        scraped_at: scrapedAt,
+        is_new: isNew,
+        source_url: `https://resources.hse.gov.uk${path}`,
     };
 }
 
-export async function fetchNotices(maxItems: number, fetchBreachDetail: boolean): Promise<NoticeRecord[]> {
-    const noticeNumbers = await fetchListingIds('notices', maxItems);
+export async function fetchNotices(
+    maxItems: number,
+    fetchBreachDetail: boolean,
+    seenIds: ReadonlySet<string>,
+    onlyNew: boolean,
+    dateRange: DateRangePreset | undefined,
+    now: Date,
+): Promise<{ records: NoticeRecord[]; allIdsThisRun: string[] }> {
+    const { ids: noticeNumbers, allIdsThisRun } = await fetchListingIds('notices', maxItems, seenIds, onlyNew);
+    const scrapedAt = now.toISOString();
     const records: NoticeRecord[] = [];
     for (const noticeNumber of noticeNumbers) {
-        records.push(await fetchNoticeDetail(noticeNumber, fetchBreachDetail));
+        const record = await fetchNoticeDetail(noticeNumber, fetchBreachDetail, !seenIds.has(noticeNumber), scrapedAt);
+        if (dateRange && !isWithinDateRange(parseUkDate(record.servedDate), dateRange, now)) continue;
+        records.push(record);
     }
-    return records;
+    return { records, allIdsThisRun };
 }

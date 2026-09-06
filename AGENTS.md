@@ -10,6 +10,7 @@ Extracts the UK Health and Safety Executive's public register of
 breach/legislation and location detail, sorted newest-first.
 
 ## The site is a classic-ASP multi-step wizard, but every step is a plain,
+
 ## stateless GET with a fixed, discoverable query shape
 
 `resources.hse.gov.uk` presents its search as a multi-page wizard (pick
@@ -25,12 +26,15 @@ was directly verified (`curl` with no `-b`/`-c` at all, zero prior
 requests) - see `src/http.ts`.
 
 ## The "no real filter, sorted newest-first" query is copied verbatim
+
 ## from a real link on the site, not invented
 
 The site's own "New cases" navigation link is:
+
 ```
 case_list.asp?ST=C&CO=,+AND&SN=F&SF=ODS,+|&EO=<&SV=31/12/2100,+|&SO=DODS
 ```
+
 i.e. "offence date < 31/12/2100" (effectively "all records") sorted by
 `SO=DODS` (Date descending). The notices equivalent (self-derived by
 walking the same wizard shape with `FI=7` "date notice was issued") is
@@ -45,7 +49,7 @@ count directly - no need to guess when to stop (see
 `", "` when read as a scalar. The real wizard submits `SF`/`SV` twice per
 step (once for the real value, once as a `|` chain terminator for
 additional criteria), and the server's own rendered "Current Search
-Criteria" hidden fields show the *already-joined* result: `SF="ODS, |"`.
+Criteria" hidden fields show the _already-joined_ result: `SF="ODS, |"`.
 For the final GET this is sent as a single, ordinary query param with
 that literal joined value - verified this works identically to walking
 the full wizard.
@@ -53,6 +57,7 @@ the full wizard.
 ## Endpoints (all verified live 2026-09-06, no auth, no proxy)
 
 Convictions (`/convictions/...`):
+
 - `case/case_list.asp` - listing, links to `case_details.asp?SF=CN&SV=<id>`.
 - `case/case_details.asp?SF=CN&SV=<caseNumber>` - full detail: defendant
   (+ link to `defendant/defendant_details.asp?SF=DID&SV=<id>`),
@@ -62,6 +67,7 @@ Convictions (`/convictions/...`):
   Regulation, hearing date, result, per-breach fine.
 
 Notices (`/notices/...`):
+
 - `notices/notice_list.asp` - listing, links to
   `notice_details.asp?SF=CN&SV=<id>`.
 - `notices/notice_details.asp?SF=CN&SV=<noticeNumber>` - the `<th>` header
@@ -123,6 +129,59 @@ Notices (`/notices/...`):
 - `src/fetchConvictions.ts` / `src/fetchNotices.ts` - orchestrate
   listing -> detail (-> breach) per record.
 
+## Delta engine (2026-09-06 retrofit)
+
+Added `onlyNew`/`dateRange` input + a standardized B2B output envelope
+(`record_id`, `event_type`, `scraped_at`, `is_new`, `source_url`) across
+this portfolio's fleet. HSE-specific implementation notes:
+
+- `src/state.ts` opens a **named** key-value store
+  (`uk-hse-enforcement-monitor-delta-state`) rather than the run's default
+  one - Apify's default KV store is isolated per run and would not survive
+  between scheduled runs, which defeats the whole point of a delta. State
+  is keyed per dataset (`convictions`/`notices`) since case numbers and
+  notice numbers are independent id spaces; each dataset's seen-id list is
+  capped at 2000 entries (convictions only has ~200 total anyway; notices
+  grows slowly enough that 2000 covers many months of history).
+- `src/fetchListingIds.ts`'s early-stop: since both registers are already
+  sorted newest-first, `onlyNew=true` walks pages and stops after **2**
+  consecutive pages contain zero unseen ids (not 1) - a one-page safety
+  margin against minor reordering between runs. Verified live locally:
+  seeding state with a full cold run, then immediately re-running with
+  `onlyNew=true` correctly logged "stopping early at page 2" and returned
+  zero records, instead of walking all 21 convictions pages.
+- **Local testing gotcha**: `apify run` purges local storage by default
+  even without passing `--purge` explicitly (the CLI's own `--help` notes
+  "for crawlee projects, this is the default behavior") - use
+  `--no-purge` to test delta behavior across two separate local runs, or
+  the second run will see an empty seen-set and rediscover everything as
+  "new". The named state store itself is NOT touched by `--purge`/default
+  purging either way (only the run's default request-queue/dataset/KV
+  store are) - so state actually survives across runs regardless of the
+  flag; the flag only controls whether the OUTPUT dataset from the
+  previous run is cleared before the next one, which matters for reading
+  clean results but not for delta correctness.
+- `event_type` is set structurally, not by diffing fields: `'SANCTION'`
+  for every conviction (a conviction record inherently represents an
+  imposed sanction) and `'NEW_LISTING'` for every notice (an enforcement
+  notice is a new item appearing in the register, not itself a completed
+  sanction). This does not yet detect field-level updates to a
+  previously-seen record (e.g. a notice's Result changing from "Ongoing"
+  to something else) - that would require storing full prior snapshots
+  and diffing them, a materially bigger feature deferred for now and
+  disclosed in the README's Known Limitations.
+- `dateRange` filters on the record's own natural date field (Offence
+  Date for convictions, served-on date for notices) via
+  `src/dateFilter.ts`'s `parseUkDate` (DD/MM/YYYY, the format both fields
+  use). This is independent of, and a weaker "recency" signal than,
+  `onlyNew` for convictions specifically - Offence Date can lag real
+  publication by close to a year (see the original audit notes above:
+  newest offence date found live was ~11 months before the hearing that
+  actually published it), so a `dateRange: "24h"` filter on convictions
+  will often - correctly - return nothing, since offences are rarely
+  dated "today" even when newly published. This is disclosed in the
+  README, not silently misleading.
+
 ## Known scope limits (disclosed, not hidden)
 
 - The Convictions register is small by design: HSE's own site states it
@@ -134,5 +193,5 @@ Notices (`/notices/...`):
   dimensions (location, industry, HSE region, etc.) not exposed as actor
   input - every run currently pulls the newest N records unfiltered,
   matching the "recurring compliance monitor" use case this was built for
-  (CHAS/SSIP-style contractor vetting checks the *whole* register for a
+  (CHAS/SSIP-style contractor vetting checks the _whole_ register for a
   name match, not a pre-filtered slice).
