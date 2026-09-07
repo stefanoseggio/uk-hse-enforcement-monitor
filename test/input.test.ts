@@ -97,6 +97,18 @@ describe('resolveInput', () => {
         expect(r.hasFilters).toBe(true);
     });
 
+    it('sends a numeric main activity to the SIC code column and text to the description column (two different site columns)', () => {
+        const code = resolveInput({ mainActivityContains: '43910' }, NOW);
+        expect(code.queries.convictions.criteria).toEqual([{ sf: 'SIC', sn: 'F', eo: 'LIKE', sv: '43910' }]);
+        expect(code.queries.notices.criteria).toEqual([{ sf: 'SIC', sn: 'F', eo: 'LIKE', sv: '43910' }]);
+        const prefix = resolveInput({ mainActivityContains: ' 2562 ' }, NOW);
+        expect(prefix.queries.notices.criteria[0]).toMatchObject({ sf: 'SIC', sv: '2562' });
+        const text = resolveInput({ mainActivityContains: 'roofing' }, NOW);
+        expect(text.queries.convictions.criteria).toEqual([{ sf: 'SICD', sn: 'F', eo: 'LIKE', sv: 'roofing' }]);
+        const mixed = resolveInput({ mainActivityContains: '43910 - ROOFING' }, NOW);
+        expect(mixed.queries.convictions.criteria[0].sf).toBe('SICD');
+    });
+
     it('honours the legacy dateRange preset and keeps existing input names working', () => {
         const r = resolveInput({ dateRange: '7d', maxItemsPerDataset: 5000, fetchBreachDetail: false }, NOW);
         expect(r.queries.convictions.criteria).toEqual([{ sf: 'ODS', sn: 'F', eo: '>', sv: '30/08/2026' }]);
@@ -142,6 +154,12 @@ describe('resolveInput', () => {
         const c = resolveInput({ region: '7' }, NOW);
         expect(a.filtersSignature).toBe(b.filtersSignature);
         expect(a.filtersSignature).not.toBe(c.filtersSignature);
+        // eventTypes is applied by the delta engine, not by the site: re-ticking "updates" later must not fork the memory.
+        const d = resolveInput({ region: '3', eventTypes: ['NEW_LISTING', 'SANCTION'] }, NOW);
+        expect(d.filtersSignature).toBe(a.filtersSignature);
+        expect(resolveInput({ mainActivityContains: '43910' }, NOW).filtersSignature).not.toBe(
+            resolveInput({ mainActivityContains: 'ROOFING' }, NOW).filtersSignature,
+        );
         expect(resolveInput({ deltaStateName: 'construction-nw' }, NOW).options.deltaStateName).toBe('construction-nw');
         expect(resolveInput({ dateFrom: '30 days' }, NOW).hasFilters).toBe(false);
     });

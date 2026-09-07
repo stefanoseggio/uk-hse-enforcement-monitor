@@ -1,11 +1,11 @@
 import { Actor, log } from 'apify';
 
 import type { BuiltRecord, Candidate } from './fetchRecords.js';
-import { enrichBatch } from './fetchRecords.js';
+import { assertNotFoundWithinBounds, enrichBatch } from './fetchRecords.js';
 import type { RunOptions } from './input.js';
 import { siteCalendarDate } from './normalize.js';
 import type { DeltaState } from './state.js';
-import { markSeen, saveState } from './state.js';
+import { clearMissing, markMissing, markSeen, MISSING_RUNS_BEFORE_STUB, saveState } from './state.js';
 import type { DatasetName, HseRecord } from './types.js';
 
 // Pay-per-event names. Both must exist in the actor's pricing configuration
@@ -18,6 +18,13 @@ export const EVENT_SUMMARY = 'result-summary';
 
 export const DELIVERY_BATCH_SIZE = 15;
 export const PERSIST_EVERY_N_DELIVERED = 50;
+
+export interface DeliveryOutcome {
+    count: number;
+    truncatedByMaxItems: boolean;
+    /** New records whose detail page was missing this run and were held back (delta mode) instead of stubbed. */
+    deferredMissingDetail: number;
+}
 
 /**
  * Pushes records in small batches, persisting the seen-set only for records
@@ -46,14 +53,12 @@ export class Delivery {
         Actor.on('aborting', this.onPlatformEvent);
     }
 
-    async deliver(
-        register: DatasetName,
-        queue: readonly Candidate[],
-        maxItems: number,
-    ): Promise<{ count: number; truncatedByMaxItems: boolean }> {
+    async deliver(register: DatasetName, queue: readonly Candidate[], maxItems: number): Promise<DeliveryOutcome> {
         const today = siteCalendarDate(this.now);
         let count = 0;
         let truncatedByMaxItems = false;
+        let deferredMissingDetail = 0;
+        let consecutiveNotFound = 0;
         const droppedByEventType: string[] = [];
         for (let offset = 0; offset < queue.length && !this.chargeLimitReached; offset += DELIVERY_BATCH_SIZE) {
             const room = maxItems - count;
@@ -73,21 +78,61 @@ export class Delivery {
                 now: this.now,
             });
 
+            // Outage guard: too many listed records answering the "unknown id"
+            // 500 at once is the site failing, not a wave of withdrawals.
+            if (this.options.fetchDetail) {
+                let attempted = 0;
+                let notFound = 0;
+                let longestStreak = 0;
+                for (let i = 0; i < built.length; i++) {
+                    if (batch[i].detail !== null) continue; // UPDATED candidates arrive with their page
+                    attempted += 1;
+                    if (built[i].record.detailError === 'NOT_FOUND') {
+                        notFound += 1;
+                        consecutiveNotFound += 1; // carried across batches
+                        longestStreak = Math.max(longestStreak, consecutiveNotFound);
+                    } else {
+                        consecutiveNotFound = 0;
+                    }
+                }
+                assertNotFoundWithinBounds(register, attempted, notFound, longestStreak, 'detail fetch');
+            }
+
             // Charge the full price only for records that really carry breach detail.
             const groups: { eventName: string; items: { built: BuiltRecord; candidate: Candidate }[] }[] = [
                 { eventName: EVENT_DETAIL, items: [] },
                 { eventName: EVENT_SUMMARY, items: [] },
             ];
-            built.forEach((b, i) => {
-                if (!this.options.eventTypes.has(b.record.event_type)) {
-                    droppedByEventType.push(batch[i].id);
-                    markSeen(this.state, register, batch[i].id, b.stateEntry, today);
+            for (let i = 0; i < built.length; i++) {
+                const b = built[i];
+                const candidate = batch[i];
+                if (this.options.fetchDetail && b.record.detailError === 'NOT_FOUND' && this.options.onlyNew) {
+                    // A missing page is only "withdrawn" once it has been missing
+                    // in several runs; until then the record is neither stored
+                    // nor remembered, so the next run simply retries it.
+                    const runs = markMissing(this.state, register, candidate.id, today);
                     this.dirty = true;
-                    return;
+                    if (runs < MISSING_RUNS_BEFORE_STUB) {
+                        deferredMissingDetail += 1;
+                        log.warning(
+                            `${register} ${candidate.id}: detail page not found (run ${runs}/${MISSING_RUNS_BEFORE_STUB}) - held back for the next run instead of being delivered without detail.`,
+                        );
+                        continue;
+                    }
+                    log.warning(
+                        `${register} ${candidate.id}: detail page missing in ${runs} runs - delivering the listing-only record and treating it as withdrawn.`,
+                    );
+                }
+                if (!this.options.eventTypes.has(b.record.event_type)) {
+                    droppedByEventType.push(candidate.id);
+                    markSeen(this.state, register, candidate.id, b.stateEntry, today);
+                    clearMissing(this.state, register, candidate.id);
+                    this.dirty = true;
+                    continue;
                 }
                 const full = b.record.detailFetched && b.record.breachDetailFetched;
-                groups[full ? 0 : 1].items.push({ built: b, candidate: batch[i] });
-            });
+                groups[full ? 0 : 1].items.push({ built: b, candidate });
+            }
 
             for (const group of groups) {
                 if (group.items.length === 0 || this.chargeLimitReached) continue;
@@ -102,6 +147,7 @@ export class Delivery {
                 for (const { built: b, candidate } of group.items.slice(0, stored)) {
                     this.records.push(b.record);
                     markSeen(this.state, register, candidate.id, b.stateEntry, today);
+                    clearMissing(this.state, register, candidate.id);
                     this.dirty = true;
                     this.sinceLastPersist += 1;
                     count += 1;
@@ -119,7 +165,12 @@ export class Delivery {
         if (droppedByEventType.length > 0) {
             log.info(`${register}: ${droppedByEventType.length} record(s) skipped by eventTypes after detail fetch.`);
         }
-        return { count, truncatedByMaxItems };
+        if (deferredMissingDetail > 0) {
+            log.warning(
+                `${register}: ${deferredMissingDetail} record(s) whose detail page was missing were held back for a later run.`,
+            );
+        }
+        return { count, truncatedByMaxItems, deferredMissingDetail };
     }
 
     async persist(): Promise<void> {

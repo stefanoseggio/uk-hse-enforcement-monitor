@@ -139,6 +139,9 @@ interface ResolvedFilters {
     act: string | null;
 }
 
+/** A SIC 2007 code or a prefix of one (division 2 digits ... subclass 5 digits). */
+export const SIC_CODE_RE = /^\d{2,5}$/;
+
 /**
  * Column codes per register - all verified live with result counts on
  * 2026-09-07 (see AGENTS.md). `NT IN` must come first in a join.
@@ -159,7 +162,15 @@ function criteriaFor(register: DatasetName, f: ResolvedFilters): Criterion[] {
     like(isConv ? 'DN' : 'RN', f.nameContains);
     like(isConv ? 'CSUM' : 'NSUM', f.descriptionContains);
     like(isConv ? 'LA' : 'NLAC', f.localAuthorityContains);
-    like('SICD', f.mainActivityContains);
+    // Two different columns on the site (verified live 2026-09-07): `SICD`
+    // is the activity DESCRIPTION text only ("MACHINING" -> 911 notices,
+    // "25620" -> 0), `SIC` is the numeric code ("25620" -> 911, prefix "2562"
+    // -> 911 with LIKE; "38320" -> 4 convictions). A numeric value is
+    // therefore sent to SIC (LIKE, so a 2-4 digit prefix selects a whole
+    // division/group), anything else to SICD.
+    if (f.mainActivityContains) {
+        like(SIC_CODE_RE.test(f.mainActivityContains) ? 'SIC' : 'SICD', f.mainActivityContains);
+    }
     pick('UKR', f.region);
     pick('CTR', f.country);
     pick('GS', f.industry);
@@ -290,16 +301,13 @@ export function resolveInput(raw: ActorInput, now: Date): ResolvedInput {
         notices: { register: 'notices', criteria: criteriaFor('notices', filters), sort: WALK_SORT.notices },
     };
 
-    // Everything that changes which rows come back - but not how many
-    // (maxItems), how rich they are (fetch* flags) or which registers are
-    // walked (each register has its own map inside the store) - names the
-    // delta store. A recency window moves every day and must not fork it.
-    const signatureSource = JSON.stringify({
-        ...filters,
-        dateFrom: null,
-        dateTo: null,
-        eventTypes: [...eventTypesRaw].sort(),
-    });
+    // Only the SERVER-SIDE filters - everything that changes which rows the
+    // site returns - name the delta store. Not: how many (maxItems), how rich
+    // (fetch* flags), which registers (each has its own map inside the
+    // store), the recency window (it moves every day) or eventTypes (rows a
+    // run drops by event type are still marked seen, so re-ticking an event
+    // type later must not re-baseline and re-charge a running task).
+    const signatureSource = JSON.stringify({ ...filters, dateFrom: null, dateTo: null });
     const filtersSignature = shortHash(signatureSource);
     const hasFilters = Object.entries(filters).some(([k, v]) => {
         if (k === 'dateFrom' || k === 'dateTo') return false;

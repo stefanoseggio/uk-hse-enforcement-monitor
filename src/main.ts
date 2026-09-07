@@ -3,11 +3,20 @@ import { Actor, log } from 'apify';
 import { Delivery } from './delivery.js';
 import type { Candidate, WalkResult } from './fetchRecords.js';
 import { recheckKnown, selectRecheckIds, walkListing } from './fetchRecords.js';
+import { setMaxInFlightRequests } from './http.js';
 import type { RunOptions } from './input.js';
 import { resolveInput } from './input.js';
 import { siteCalendarDate } from './normalize.js';
 import type { DeltaState } from './state.js';
-import { loadState, markSeen, saveState, stateStoreName } from './state.js';
+import {
+    clearMissing,
+    loadState,
+    markMissing,
+    markSeen,
+    MISSING_RUNS_BEFORE_CLOSED,
+    saveState,
+    stateStoreName,
+} from './state.js';
 import type { DatasetName, RegisterQuery } from './types.js';
 import { listingUrl } from './urls.js';
 
@@ -15,8 +24,13 @@ interface RegisterOutcome {
     walk: WalkResult;
     rechecked: number;
     recheckUpdated: number;
+    /** Known open records whose page was not found THIS run (closed only after MISSING_RUNS_BEFORE_CLOSED runs). */
     recheckVanished: number;
+    /** Known records that stopped being re-checked this run (missing in enough consecutive runs). */
+    recheckClosed: number;
     delivered: number;
+    /** New records held back because their detail page was missing (retried next run). */
+    deferredMissingDetail: number;
     truncatedByMaxItems: boolean;
 }
 
@@ -48,6 +62,7 @@ async function processRegister(
     let updated: Candidate[] = [];
     let rechecked = 0;
     let vanished: string[] = [];
+    let recheckClosed = 0;
     if (options.onlyNew && options.fetchDetail && options.eventTypes.has('UPDATED')) {
         const ids = selectRecheckIds(seen, today, options.recheckDays);
         rechecked = ids.length;
@@ -59,9 +74,25 @@ async function processRegister(
             updated = result.updated;
             vanished = result.vanished;
             for (const id of ids) if (seen[id]) seen[id].l = today;
+            for (const id of result.readIds) clearMissing(state, register, id);
         }
     }
-    for (const id of vanished) if (seen[id]) seen[id].o = false;
+    // A page that answers the site's "unknown id" 500 may be a withdrawn
+    // record or a server hiccup; a known record stops being re-checked only
+    // once it has been missing in MISSING_RUNS_BEFORE_CLOSED distinct runs.
+    for (const id of vanished) {
+        const runs = markMissing(state, register, id, today);
+        if (runs >= MISSING_RUNS_BEFORE_CLOSED && seen[id]) {
+            seen[id].o = false;
+            clearMissing(state, register, id);
+            recheckClosed += 1;
+            log.info(`${register} ${id}: page missing in ${runs} runs - no longer re-checked for updates.`);
+        } else {
+            log.warning(
+                `${register} ${id}: page not found (run ${runs}/${MISSING_RUNS_BEFORE_CLOSED}) - will be re-checked again next run.`,
+            );
+        }
+    }
 
     await Actor.setStatusMessage(
         `${register}: ${walk.candidates.length} new + ${updated.length} updated record(s) to deliver (${matched} match your filters on HSE). Fetching detail...`,
@@ -78,7 +109,9 @@ async function processRegister(
         rechecked,
         recheckUpdated: updated.length,
         recheckVanished: vanished.length,
+        recheckClosed,
         delivered: delivered.count,
+        deferredMissingDetail: delivered.deferredMissingDetail,
         truncatedByMaxItems: walk.truncatedByMaxItems || delivered.truncatedByMaxItems,
     };
 }
@@ -107,6 +140,8 @@ async function run(): Promise<void> {
     const today = siteCalendarDate(now);
     const resolved = resolveInput((await Actor.getInput()) ?? {}, now);
     const { queries, options } = resolved;
+    // One run-wide budget for simultaneous requests (listing, detail, breach and party pages together).
+    setMaxInFlightRequests(options.maxConcurrency);
 
     for (const register of options.datasets) log.info(`${register} query: ${listingUrl(queries[register])}`);
     log.info(
@@ -166,6 +201,8 @@ async function run(): Promise<void> {
         rechecked: mapOutcomes(outcomes, (o) => o.rechecked),
         recheckUpdated: mapOutcomes(outcomes, (o) => o.recheckUpdated),
         recheckVanished: mapOutcomes(outcomes, (o) => o.recheckVanished),
+        recheckClosed: mapOutcomes(outcomes, (o) => o.recheckClosed),
+        deferredMissingDetail: mapOutcomes(outcomes, (o) => o.deferredMissingDetail),
         truncatedByMaxItems: Object.values(outcomes).some((o) => o?.truncatedByMaxItems === true),
         chargeLimitReached: delivery.chargeLimitReached,
         excluded: countBy(
@@ -188,6 +225,8 @@ async function run(): Promise<void> {
     if (byType.NEW_LISTING) parts.push(`${byType.NEW_LISTING} notices`);
     if (byType.UPDATED) parts.push(`${byType.UPDATED} updated`);
     if (summary.detailFailed) parts.push(`${summary.detailFailed} without detail`);
+    const deferred = Object.values(summary.deferredMissingDetail).reduce((n, v) => n + (v ?? 0), 0);
+    if (deferred) parts.push(`${deferred} held back (detail page missing)`);
     if (summary.truncatedByMaxItems) parts.push('maxItemsPerDataset reached - more available');
     if (delivery.chargeLimitReached) parts.push('spending limit reached');
     const matching = options.datasets

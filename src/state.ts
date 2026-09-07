@@ -32,12 +32,34 @@ export interface StateEntry {
     l: string;
 }
 
+/**
+ * A record whose detail page answered the site's "unknown id" 500 in one or
+ * more runs. The 500 is indistinguishable from a transient server error, so
+ * nothing is final after one run: `n` counts the DISTINCT runs (by London
+ * calendar day `l`) in which the page was missing.
+ */
+export interface MissingEntry {
+    /** Number of distinct runs in which the detail page was missing. */
+    n: number;
+    /** Calendar day (YYYY-MM-DD) of the last run that found it missing. */
+    l: string;
+}
+
 export interface DeltaState {
     version: 2;
     seen: Record<DatasetName, Record<string, StateEntry>>;
+    /** Records currently deferred / suspected withdrawn (not part of the seen-set). */
+    missing: Record<DatasetName, Record<string, MissingEntry>>;
     lastRunAt: string | null;
     filtersSignature: string | null;
 }
+
+/** Runs in which a NEW record's detail must be missing before it is delivered as a listing-only stub and marked seen. */
+export const MISSING_RUNS_BEFORE_STUB = 3;
+/** Runs in which a KNOWN open record's detail must be missing before it stops being re-checked. */
+export const MISSING_RUNS_BEFORE_CLOSED = 2;
+/** Bound on the missing map per register (oldest dropped first). */
+export const MAX_MISSING_ENTRIES = 5_000;
 
 interface LegacyState {
     seenIds?: Partial<Record<DatasetName, string[]>>;
@@ -45,7 +67,13 @@ interface LegacyState {
 }
 
 export function emptyState(filtersSignature: string | null): DeltaState {
-    return { version: 2, seen: { convictions: {}, notices: {} }, lastRunAt: null, filtersSignature };
+    return {
+        version: 2,
+        seen: { convictions: {}, notices: {} },
+        missing: { convictions: {}, notices: {} },
+        lastRunAt: null,
+        filtersSignature,
+    };
 }
 
 export function stateStoreName(deltaStateName: string): string {
@@ -97,6 +125,9 @@ export async function loadState(storeName: string, options: LoadStateOptions): P
         }
         stored.seen.convictions ??= {};
         stored.seen.notices ??= {};
+        stored.missing ??= { convictions: {}, notices: {} };
+        stored.missing.convictions ??= {};
+        stored.missing.notices ??= {};
         return stored;
     }
     if (adoptLegacy) {
@@ -131,15 +162,40 @@ export function markSeen(
     };
 }
 
-/** Keep each register's map bounded: drop the entries last seen longest ago first. */
-export function pruneState(state: DeltaState, max = MAX_SEEN_ENTRIES): void {
+/**
+ * Records one more run in which `id`'s detail page was missing. Counts at
+ * most once per calendar day, so retries inside one run do not inflate it.
+ * Returns the number of distinct runs it has now been missing.
+ */
+export function markMissing(state: DeltaState, register: DatasetName, id: string, today: string): number {
+    const previous = state.missing[register][id];
+    if (previous && previous.l === today) return previous.n;
+    const n = (previous?.n ?? 0) + 1;
+    state.missing[register][id] = { n, l: today };
+    return n;
+}
+
+/** The record's page was read again (or it was delivered): forget its missing history. */
+export function clearMissing(state: DeltaState, register: DatasetName, id: string): void {
+    delete state.missing[register][id];
+}
+
+/** Keep each register's maps bounded: drop the entries last seen longest ago first. */
+export function pruneState(state: DeltaState, max = MAX_SEEN_ENTRIES, maxMissing = MAX_MISSING_ENTRIES): void {
     for (const register of ['convictions', 'notices'] as const) {
         const entries = Object.entries(state.seen[register]);
-        if (entries.length <= max) continue;
-        entries.sort((a, b) => a[1].l.localeCompare(b[1].l));
-        const drop = entries.length - max;
-        for (let i = 0; i < drop; i++) delete state.seen[register][entries[i][0]];
-        log.info(`Pruned ${drop} oldest ${register} entries from the delta state (cap ${max}).`);
+        if (entries.length > max) {
+            entries.sort((a, b) => a[1].l.localeCompare(b[1].l));
+            const drop = entries.length - max;
+            for (let i = 0; i < drop; i++) delete state.seen[register][entries[i][0]];
+            log.info(`Pruned ${drop} oldest ${register} entries from the delta state (cap ${max}).`);
+        }
+        const missing = Object.entries(state.missing[register]);
+        if (missing.length > maxMissing) {
+            missing.sort((a, b) => a[1].l.localeCompare(b[1].l));
+            const drop = missing.length - maxMissing;
+            for (let i = 0; i < drop; i++) delete state.missing[register][missing[i][0]];
+        }
     }
 }
 

@@ -24,7 +24,16 @@ describe('parseListingPage against real captured pages', () => {
             localAuthority: 'Hillingdon',
             mainActivity: '41201 - CONSTRUCTION COMMERCIAL BLDGS',
             noticeType: null,
+            complianceDate: null,
+            noticeResult: null,
         });
+        expect(page.columns).toEqual([
+            'Case Number',
+            "Defendant's Name",
+            'Offence Date',
+            'Local Authority',
+            'Main Activity',
+        ]);
     });
 
     it('reads every column of the notices listing (notice-number order)', () => {
@@ -38,7 +47,48 @@ describe('parseListingPage against real captured pages', () => {
             date: '24/06/2026',
             localAuthority: 'Cannock Chase',
             mainActivity: 'MVR',
+            complianceDate: null,
+            noticeResult: null,
         });
+        expect(page.columns.length).toBe(6);
+    });
+
+    it('maps the 8-column notices listing (any Improvement code in the NT filter, live 2026-09-07) by header name', () => {
+        const page = parseListingPage(load('notice_list_improvement_8col.html'), 'notices');
+        expect(page).toMatchObject({ isListingPage: true, isErrorPage: false, totalMatching: 22424, page: 1 });
+        expect(page.columns).toEqual([
+            'Notice Number',
+            "Recipient's Name",
+            'Notice Type',
+            'Issue Date',
+            'Compliance Date',
+            'Notice Result',
+            'Local Authority',
+            'Main Activity',
+        ]);
+        expect(page.rows.length).toBe(10);
+        expect(page.rows[0]).toEqual({
+            id: '316142307',
+            detailHref: 'notice_details.asp?SF=CN&SV=316142307',
+            name: 'E.P. Engineering Company (Dundee) Limited',
+            noticeType: 'Improvement Notice',
+            date: '10/04/2026',
+            complianceDate: '09/06/2026',
+            noticeResult: 'Complied with',
+            localAuthority: 'Dundee UA',
+            mainActivity: 'MACHINING',
+        });
+        expect(page.rows[1]).toMatchObject({
+            id: '316137324',
+            noticeResult: 'Ongoing',
+            localAuthority: 'South Oxfordshire',
+        });
+        // Never positional: no row has a date or a result where the local authority / activity belong.
+        for (const row of page.rows) {
+            expect(row.localAuthority).not.toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+            expect(row.mainActivity).not.toMatch(/^(Ongoing|Complied with)$/);
+            expect(row.complianceDate).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+        }
     });
 
     it('treats a page past the end as a legitimate empty listing', () => {

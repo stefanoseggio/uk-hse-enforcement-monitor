@@ -25,7 +25,9 @@ browser UA anyway. `resources.hse.gov.uk/robots.txt` is 404 (no rules);
 `www.hse.gov.uk/robots.txt` disallows `/prosecutions/case/case_details.asp?SF=CN&SV=4157835`
 (the legacy path of this register) - `src/codes.ts` skips that case. Pages
 answer in 0.3-2.5 s; 17 concurrent fetches were served without throttling
-(v1 audit). `maxConcurrency` is capped at 10, default 5.
+(v1 audit). `maxConcurrency` is capped at 10, default 5, and is a RUN-WIDE
+cap: every fetch takes a slot in one semaphore (`http.ts`), so the breach
+and party fan-out of a record never multiplies it.
 
 ### The query grammar is a classic-ASP comma join
 
@@ -54,24 +56,24 @@ validates every page because:
 
 Column codes (all verified with result counts; "-" = not on that register):
 
-| Filter                   | Convictions     | Notices             | Notes                                                                 |
-| ------------------------ | --------------- | ------------------- | --------------------------------------------------------------------- |
-| name contains            | `DN` LIKE       | `RN` LIKE           | 127 / 8,792 for "Limited" / "Ltd"                                     |
-| summary contains         | `CSUM` LIKE     | `NSUM` LIKE         | "asbestos": 3 / 1,978                                                 |
-| local authority contains | `LA` LIKE       | `NLAC` LIKE         | `NLA` exists but is something else (0 hits)                           |
-| main activity (SIC)      | `SICD` LIKE     | `SICD` LIKE         | matches code or text ("43910" / "ROOFING"); `SIC` is the same column  |
-| UK region                | `UKR` = (P)     | `UKR` = (P)         | 1-7, see `src/codes.ts`                                               |
-| country                  | `CTR` = (P)     | `CTR` = (P)         | 8-11                                                                  |
-| industry                 | `GS` = (P)      | `GS` = (P)          | 12-16                                                                 |
-| HSE division             | `HDV` = (P)     | `HDV` = (P)         | 17-27; `HDR` = directorate, `HGR`/`NHGR` = group, `HAR`/`NHAR` = area |
-| date                     | `ODS` (offence) | `NIS` (issued)      | DD/MM/YYYY                                                            |
-| party id                 | `DID` =         | `RID` =             | the HSE Reference; the same id is used on both registers              |
-| record number            | `CN` =          | `NN` =              |                                                                       |
-| defendant status         | `CTY` = (P)     | -                   | 1972-1981                                                             |
-| fatality                 | `FAT` = Yes/No  | -                   | 43 fatal cases                                                        |
-| total fine / costs       | `TF` / `TC` > < | -                   | numeric, no symbol                                                    |
-| notice type              | -               | `NT` IN `01;..;09;` | 08 = 7,627; 01;02;03 = 22,424; 04..09 = 7,650                         |
-| act                      | -               | `ACT` = (P)         | 43 codes; `ACTS`/`REGN`/`REGP` exist but are ignored by the listing   |
+| Filter                   | Convictions     | Notices             | Notes                                                                                                                                                                                                                                                                                                   |
+| ------------------------ | --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| name contains            | `DN` LIKE       | `RN` LIKE           | 127 / 8,792 for "Limited" / "Ltd"                                                                                                                                                                                                                                                                       |
+| summary contains         | `CSUM` LIKE     | `NSUM` LIKE         | "asbestos": 3 / 1,978                                                                                                                                                                                                                                                                                   |
+| local authority contains | `LA` LIKE       | `NLAC` LIKE         | `NLA` exists but is something else (0 hits)                                                                                                                                                                                                                                                             |
+| main activity (SIC)      | `SIC` / `SICD`  | `SIC` / `SICD` LIKE | TWO columns: `SIC` = code ("43910" -> 8 conv, "25620" -> 911 not, prefix "2562" -> 911 with LIKE, `=` needs the full code); `SICD` = description text only ("ROOFING" -> 8, "MACHINING" -> 911; "43910" -> 0). input.ts routes `/^\d{2,5}$/` to `SIC` LIKE                                              |
+| UK region                | `UKR` = (P)     | `UKR` = (P)         | 1-7, see `src/codes.ts`                                                                                                                                                                                                                                                                                 |
+| country                  | `CTR` = (P)     | `CTR` = (P)         | 8-11                                                                                                                                                                                                                                                                                                    |
+| industry                 | `GS` = (P)      | `GS` = (P)          | 12-16                                                                                                                                                                                                                                                                                                   |
+| HSE division             | `HDV` = (P)     | `HDV` = (P)         | 17-27; `HDR` = directorate, `HGR`/`NHGR` = group, `HAR`/`NHAR` = area                                                                                                                                                                                                                                   |
+| date                     | `ODS` (offence) | `NIS` (issued)      | DD/MM/YYYY                                                                                                                                                                                                                                                                                              |
+| party id                 | `DID` =         | `RID` =             | the HSE Reference; the same id is used on both registers                                                                                                                                                                                                                                                |
+| record number            | `CN` =          | `NN` =              |                                                                                                                                                                                                                                                                                                         |
+| defendant status         | `CTY` = (P)     | -                   | 1972-1981                                                                                                                                                                                                                                                                                               |
+| fatality                 | `FAT` = Yes/No  | -                   | 43 fatal cases                                                                                                                                                                                                                                                                                          |
+| total fine / costs       | `TF` / `TC` > < | -                   | numeric, no symbol                                                                                                                                                                                                                                                                                      |
+| notice type              | -               | `NT` IN `01;..;09;` | per code (page-1 wording): 01 Crown Improvement 16, 02 FEPA Improvement 25, 03 Improvement 22,383, 04 Deferred Crown Prohibition 1, 05 Immediate Crown Prohibition 2, 06 Deferred Prohibition 8, 07 FEPA Prohibition 9, 08 Immediate Prohibition 7,627, 09 COMAH 3. ANY of 01/02/03 -> 8-column listing |
+| act                      | -               | `ACT` = (P)         | 43 codes; `ACTS`/`REGN`/`REGP` exist but are ignored by the listing                                                                                                                                                                                                                                     |
 
 Not exposed (code unknown or unverified): custodial sentence (wizard field
 21 - none of 8 guessed codes existed), type of location, HSE directorate /
@@ -104,17 +106,29 @@ only be found by guessing against the error page.
   A to B" (notices insert "from 30226 total records"); column header row
   "Case Number | Defendant's Name | Offence Date | Local Authority | Main
   Activity" / "Notice Number | Recipient's Name | Notice Type | Issue Date |
-  Local Authority | Main Activity". 10 rows per page.
+  Local Authority | Main Activity". 10 rows per page. **Whenever the NT
+  filter contains an Improvement code (01/02/03, alone or mixed with
+  prohibition codes) the notices table has 8 columns**: "... Issue Date |
+  Compliance Date | Notice Result | Local Authority | Main Activity"
+  (fixture `notice_list_improvement_8col.html`). `parseListingPage` finds
+  the header row by its `<th>` labels and maps cells BY NAME (never by
+  position); the extra columns feed `ListingRow.complianceDate` /
+  `noticeResult`, which `buildNoticeRecord` uses as fallbacks for
+  `complianceDate` / `result` in listing-only runs.
 - Past the end: HTTP 200, "Showing Page 22 of 21, results -3 to 210", zero
   rows - a legitimate end (cheap). Zero results: "0 Matching results
   found", no "Showing Page" line.
-- `parseListingPage().isListingPage` requires: no error text, the column
-  header of the requested register, and a "Matching results found" count.
-  The walker retries twice and then FAILS the run.
+- `parseListingPage().isListingPage` requires: no error text, a header row
+  carrying every required column of the requested register (in either
+  shape), and a "Matching results found" count. The walker retries twice
+  and then FAILS the run.
 - Detail pages: a `<th>` header "Details for Case No. N" / "Notice N served
   against <a>Recipient</a> on DD/MM/YYYY" (`isDetailPage`). An unknown id
-  answers **HTTP 500** (not 404); `fetchOptional` treats a 500 that survives
-  one retry as "record missing" (null) so one withdrawn record degrades.
+  answers **HTTP 500** (not 404) - the generic IIS "500 - Internal server
+  error" page, byte-identical for cases and notices and to a transient
+  server error. `fetchOptional` treats a 500 that survives two retries as
+  "record missing" (null), and the callers never take one miss as final
+  (see invariant 8).
 - Fatal cases carry an extra single-cell row "This case did result from the
   investigation of a fatality" (`parseFatalityFlag`).
 - A multi-breach case page does NOT link its breaches (its "Breaches
@@ -229,25 +243,51 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
    (outside PPE everything is stored, nothing charged).
 7. Every listing page is validated; a SQL error page or a non-listing fails
    the run after 2 retries. Never report "0 new" on a broken page.
+8. **A missing detail page (site 500) is never final after one run.** The
+   state carries a second map `missing[register][id] = { n, l }` (distinct
+   runs by London calendar day). Delta mode: a NEW record whose page is
+   missing is neither pushed nor marked seen until `n` reaches
+   `MISSING_RUNS_BEFORE_STUB` (3), then it is pushed as a listing-only stub
+   (`detailError: NOT_FOUND`, `result-summary`) and marked seen with
+   `h=null, o=false`; full mode pushes the stub at once (as v1 did). A
+   KNOWN open record found missing by the re-check keeps `o=true` until
+   `n` reaches `MISSING_RUNS_BEFORE_CLOSED` (2). Any successful read or
+   delivery clears the entry. Outage guard (`assertNotFoundWithinBounds`):
+    > = 30% NOT_FOUND of a sample of >= 10 detail fetches, or >= 5 in a row
+    > (carried across delivery batches), throws -> `Actor.fail`, nothing
+    > stored or remembered. Tests: `test/main.missingDetail.test.ts`.
+9. The delta store fingerprint covers server-side filters only - never
+   `eventTypes` (rows dropped by event type are marked seen anyway, so a
+   later change of `eventTypes` must not re-baseline a running task).
 
 ## Tests
 
-- `npm test` - offline, ~1 s: 68 tests on real captured fixtures + mocked
-  HTTP (walk cold / delta / dedupe / maxItems / blocked, UPDATED through
-  hashes, record building, input, urls, normalisers, parsers) including an
-  end-to-end run of `src/main.ts` with the SDK mocked that asserts the
-  persist-after-delivery invariant under a spending limit.
-- `npm run test:live` (`LIVE=1`) - 9 live checks (~20 s): both registers
+- `npm test` - offline, ~1 s: 78 tests on real captured fixtures + mocked
+  HTTP (walk cold / delta / dedupe / maxItems / blocked / 8-column
+  improvement listing, UPDATED through hashes, NOT_FOUND guard, record
+  building incl. listing-only improvement notices, input incl. SIC routing
+  and fingerprint, urls, normalisers, parsers) including two end-to-end
+  runs of `src/main.ts` with the SDK mocked: the persist-after-delivery
+  invariant under a spending limit, and the missing-detail policy across
+  several calendar days (deferral, stub after 3 runs, close after 2
+  re-checks, outage guard on both paths).
+- `npm run test:live` (`LIVE=1`) - 13 live checks (~25 s): both registers
   with full detail, name + region filter, inclusive date window, notice
-  type join, zero-result termination, SQL error page detection, re-check
-  semantics, missing-record 500.
+  type join, Improvement code -> 8-column listing (single and mixed with
+  08), the wording of all nine NT codes, numeric vs text
+  `mainActivityContains`, zero-result termination, SQL error page
+  detection, re-check semantics, missing-record 500.
 - Local end-to-end: put an input in `storage/key_value_stores/default/INPUT.json`
   and `apify run --purge`; the delta store appears under
   `storage/key_value_stores/uk-hse-enforcement-monitor-state-<name>/`
   (`--purge` clears only the default stores, so a second run is a real delta
   run). Verified 2026-09-07 with `{ nameContains: "Llanelec", onlyNew: true }`:
   pass 1 delivered 22 notices, pass 2 delivered 0 (early-stop at page 2, 21
-  re-checked, 0 changed).
+  re-checked, 0 changed); and again after the 8-column fix with
+  `{ datasets: ["notices"], noticeTypes: ["03"], nameContains: "Llanelec", onlyNew: true, maxItemsPerDataset: 50 }`
+  (the 8-column listing): pass 1 walked 3 pages and delivered 22 notices
+  with detail (store `auto-1b447175`), pass 2 delivered 0 - early-stop at
+  page 2, 20 excluded as known, 21 re-checked, 0 changed, 0 not found.
 
 ## Known scope limits (disclosed in the README)
 

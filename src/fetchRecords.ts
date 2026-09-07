@@ -371,8 +371,48 @@ export function selectRecheckIds(
 export interface RecheckResult {
     updated: Candidate[];
     unchanged: number;
+    /** Ids whose page answered the site's "unknown id" 500 this run (NOT final - see main.ts). */
     vanished: string[];
+    /** Ids whose page was read (changed or unchanged) - their missing history, if any, is cleared. */
+    readIds: string[];
     failed: number;
+}
+
+/**
+ * Outage guard. The site's answer for an unknown id is the generic IIS 500
+ * page, so a server hiccup looks exactly like a withdrawn record. A single
+ * missing record is plausible; a large share of listed / recently delivered
+ * records disappearing in one run is not - that is the site failing, and
+ * the run must fail with it rather than quietly closing or stubbing them.
+ * Applied to any sample of at least MIN_SAMPLE detail fetches (ratio), and
+ * to a streak of consecutive misses in delivery order.
+ */
+export const NOT_FOUND_GUARD = { ratio: 0.3, minSample: 10, maxConsecutive: 5 };
+
+export function assertNotFoundWithinBounds(
+    register: DatasetName,
+    attempted: number,
+    notFound: number,
+    consecutive: number,
+    context: string,
+): void {
+    const tooMany = attempted >= NOT_FOUND_GUARD.minSample && notFound / attempted >= NOT_FOUND_GUARD.ratio;
+    const streak = consecutive >= NOT_FOUND_GUARD.maxConsecutive;
+    if (!tooMany && !streak) return;
+    throw new Error(
+        `HSE ${register} ${context}: ${notFound} of ${attempted} record page(s) answered the site's "unknown id" 500 (${consecutive} in a row) although the register lists them - treating this as a site outage, not as withdrawals. Aborting so no record is stubbed or dropped; the next run retries.`,
+    );
+}
+
+/** Longest streak of consecutive NOT_FOUND results, in order. */
+export function longestNotFoundStreak(errors: readonly (string | null)[]): number {
+    let streak = 0;
+    let longest = 0;
+    for (const e of errors) {
+        streak = e === 'NOT_FOUND' ? streak + 1 : 0;
+        longest = Math.max(longest, streak);
+    }
+    return longest;
 }
 
 export async function recheckKnown(
@@ -381,9 +421,16 @@ export async function recheckKnown(
     seen: Readonly<Record<string, StateEntry>>,
     maxConcurrency: number,
 ): Promise<RecheckResult> {
-    const result: RecheckResult = { updated: [], unchanged: 0, vanished: [], failed: 0 };
+    const result: RecheckResult = { updated: [], unchanged: 0, vanished: [], readIds: [], failed: 0 };
     if (ids.length === 0) return result;
     const details = await mapWithConcurrency(ids, maxConcurrency, async (id) => fetchDetailFor(register, id));
+    assertNotFoundWithinBounds(
+        register,
+        ids.length,
+        details.filter((d) => d.error === 'NOT_FOUND').length,
+        longestNotFoundStreak(details.map((d) => d.error)),
+        're-check of known open records',
+    );
     details.forEach((d, i) => {
         const id = ids[i];
         const prior = seen[id];
@@ -395,6 +442,7 @@ export async function recheckKnown(
             result.failed += 1;
             return;
         }
+        result.readIds.push(id);
         if (detailContentHash(d.detail) === prior.h) {
             result.unchanged += 1;
             return;
@@ -411,7 +459,7 @@ export async function recheckKnown(
         });
     });
     log.info(
-        `${register}: re-checked ${ids.length} known open record(s) - ${result.updated.length} changed, ${result.unchanged} unchanged, ${result.vanished.length} no longer on the register, ${result.failed} could not be read.`,
+        `${register}: re-checked ${ids.length} known open record(s) - ${result.updated.length} changed, ${result.unchanged} unchanged, ${result.vanished.length} not found this run, ${result.failed} could not be read.`,
     );
     return result;
 }
@@ -717,15 +765,20 @@ export function buildNoticeRecord(
     const flags = classifyNoticeType(noticeType);
     const servedDate = detail?.servedDate ?? row?.date ?? null;
     const servedDateIso = parseUkDate(servedDate);
-    const complianceDateIso = parseUkDate(f['Compliance Date']);
+    // The detail page is authoritative; the listing row carries Compliance
+    // Date and Notice Result too whenever an Improvement code is in the
+    // noticeTypes filter (the site's 8-column shape), so listing-only runs of
+    // improvement notices still get them.
+    const complianceDate = f['Compliance Date'] || row?.complianceDate || null;
+    const complianceDateIso = parseUkDate(complianceDate);
     const revisedComplianceDateIso = parseUkDate(f['Revised Compliance Date']);
     const effective = revisedComplianceDateIso ?? complianceDateIso;
-    const result = f.Result || null;
+    const result = f.Result || row?.noticeResult || null;
     // Improvement Notices carry a Result ("Ongoing" / "Complied with"); prohibition
     // notice pages have no Result row at all (verified live), so their status is unknown.
     let isOngoing: boolean | null = null;
     let isCompliedWith: boolean | null = null;
-    if (detail && result) {
+    if (result) {
         isOngoing = /^ongoing$/i.test(result);
         isCompliedWith = /complied/i.test(result);
     } else if (detail && flags.isImprovement) {
@@ -751,7 +804,7 @@ export function buildNoticeRecord(
         noticeType,
         servedDate,
         description,
-        complianceDate: f['Compliance Date'] || null,
+        complianceDate,
         revisedComplianceDate: f['Revised Compliance Date'] || null,
         result,
         breaches,

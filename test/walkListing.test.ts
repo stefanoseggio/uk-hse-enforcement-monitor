@@ -18,6 +18,7 @@ const SQL_ERROR = fx('listing_sql_error_page.html');
 const NOT_DNN_P1 = fx('notice_list_dnn_page1.html');
 const NOT_DNIS_P1 = fx('notice_list_page1.html');
 const NOT_PAST_END = fx('notice_list_past_end.html');
+const NOT_IMPROVEMENT_8COL = fx('notice_list_improvement_8col.html');
 
 const convP1Ids = parseListingPage(cheerio.load(CONV_DCN_P1), 'convictions').rows.map((r) => r.id);
 const convP2Ids = parseListingPage(cheerio.load(CONV_DODS_P1), 'convictions').rows.map((r) => r.id);
@@ -41,6 +42,8 @@ const {
     detailContentHash,
     parseDetailPage,
     fetchRecords,
+    assertNotFoundWithinBounds,
+    longestNotFoundStreak,
 } = await import('../src/fetchRecords.js');
 
 const CONV: RegisterQuery = { register: 'convictions', criteria: [], sort: 'DCN' };
@@ -164,6 +167,27 @@ describe('walkListing against real captured fixtures', () => {
         expect(result.excluded.filter((c) => c.excludedBy === 'eventType').length).toBe(9);
     });
 
+    it('walks the 8-column listing the site renders for Improvement codes (01/02/03) - columns by name, never by position', async () => {
+        const lastPage = NOT_IMPROVEMENT_8COL.replace('Showing Page 1 of 2243', 'Showing Page 1 of 1');
+        servePages(lastPage);
+        const result = await walk({
+            register: 'notices',
+            criteria: [{ sf: 'NT', sn: 'F', eo: 'IN', sv: '03;' }],
+            sort: 'DNN',
+        });
+        expect(result.totalMatching).toBe(22424);
+        expect(result.candidates.length).toBe(10);
+        expect(result.candidates[0].row).toMatchObject({
+            id: '316142307',
+            noticeType: 'Improvement Notice',
+            complianceDate: '09/06/2026',
+            noticeResult: 'Complied with',
+            localAuthority: 'Dundee UA',
+            mainActivity: 'MACHINING',
+        });
+        expect(result.stopReason).toBe('no-more-pages');
+    });
+
     it('FAILS LOUDLY (after retries) on the site SQL error page instead of reporting "nothing new"', async () => {
         fetchWithRetryMock.mockResolvedValue(SQL_ERROR);
         await expect(walk(CONV)).rejects.toThrow(/SQL error page/);
@@ -209,6 +233,28 @@ describe('UPDATED detection through content hashes (the register has no timestam
         expect(result.updated[0].detail?.fields.Result).toBe('Complied with');
         expect(result.unchanged).toBe(1);
         expect(result.vanished).toEqual(['999']);
+    });
+
+    it('re-check FAILS the run when too many known records "vanish" at once (site outage, not withdrawals)', async () => {
+        fetchOptionalMock.mockResolvedValue(null);
+        const seen: Record<string, StateEntry> = {};
+        const ids = Array.from({ length: 10 }, (_v, i) => String(316000000 + i));
+        for (const id of ids) seen[id] = entry();
+        await expect(recheckKnown('notices', ids, seen, 3)).rejects.toThrow(/site outage/);
+        // A single missing record among many is a legitimate withdrawal.
+        const complied = fx('notice_detail_315474881_complied.html');
+        fetchOptionalMock.mockImplementation(async (path) => (path.includes(`SV=${ids[0]}`) ? null : complied));
+        const result = await recheckKnown('notices', ids, seen, 3);
+        expect(result.vanished).toEqual([ids[0]]);
+        expect(result.readIds.length).toBe(9);
+    });
+
+    it('the NOT_FOUND guard trips on a 30% share of a 10+ sample or on 5 in a row, and not below', () => {
+        expect(() => assertNotFoundWithinBounds('notices', 10, 3, 2, 'x')).toThrow(/site outage/);
+        expect(() => assertNotFoundWithinBounds('notices', 10, 2, 2, 'x')).not.toThrow();
+        expect(() => assertNotFoundWithinBounds('notices', 5, 5, 5, 'x')).toThrow(/5 in a row/);
+        expect(() => assertNotFoundWithinBounds('notices', 4, 4, 4, 'x')).not.toThrow();
+        expect(longestNotFoundStreak(['NOT_FOUND', 'NOT_FOUND', null, 'NOT_FOUND'])).toBe(2);
     });
 
     it('the conviction hash covers the per-case breach list, so an appended hearing is an update', async () => {
@@ -340,6 +386,46 @@ describe('enrichBatch builds full records from real pages', () => {
             contentHash: null,
             result: null,
             isOngoing: null,
+        });
+    });
+
+    it('listing-only improvement notices get Compliance Date and Result (and the derived flags) from the 8-column listing', async () => {
+        servePages(NOT_IMPROVEMENT_8COL, NOT_PAST_END);
+        const { records } = await fetchRecords({
+            query: { register: 'notices', criteria: [{ sf: 'NT', sn: 'F', eo: 'IN', sv: '03;' }], sort: 'DNN' },
+            maxItems: 2,
+            onlyNew: false,
+            seen: {},
+            eventTypes: ALL_EVENTS,
+            fullWalk: false,
+            fetchDetail: false,
+            fetchBreachDetail: false,
+            fetchPartyDetail: false,
+            maxConcurrency: 2,
+            now: NOW,
+        });
+        expect(fetchOptionalMock).not.toHaveBeenCalled();
+        const [complied, ongoing] = records;
+        if (complied.recordType !== 'notice' || ongoing.recordType !== 'notice') throw new Error('expected notices');
+        expect(complied).toMatchObject({
+            noticeNumber: '316142307',
+            complianceDate: '09/06/2026',
+            complianceDateIso: '2026-06-09',
+            result: 'Complied with',
+            isCompliedWith: true,
+            isOngoing: false,
+            isOverdue: false,
+            daysToComply: 60,
+            localAuthority: 'Dundee UA',
+            detailFetched: false,
+        });
+        expect(ongoing).toMatchObject({
+            noticeNumber: '316137324',
+            result: 'Ongoing',
+            isOngoing: true,
+            isCompliedWith: false,
+            complianceDateIso: '2026-08-21',
+            isOverdue: true, // 21/08/2026 < 07/09/2026
         });
     });
 

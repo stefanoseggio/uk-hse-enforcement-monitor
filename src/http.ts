@@ -48,6 +48,61 @@ function isRetriableStatus(status: number): boolean {
     return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
+// ---------------------------------------------------------------------------
+// Global in-flight limit
+// ---------------------------------------------------------------------------
+
+/**
+ * One request budget for the whole run. Record enrichment fans out (a case
+ * page + its breach list + up to N breach pages + party page + two party
+ * history lists), so per-record concurrency alone would put several times
+ * `maxConcurrency` requests in flight. Every fetch takes a slot here, so the
+ * TOTAL number of requests in flight never exceeds the configured limit
+ * (default 5, `maxConcurrency` input, hard cap 10). Slots are held only for
+ * the duration of one HTTP round trip - never across nested awaits - so the
+ * limiter cannot deadlock.
+ */
+class Semaphore {
+    private active = 0;
+    private readonly waiting: (() => void)[] = [];
+
+    constructor(public limit: number) {}
+
+    async acquire(): Promise<void> {
+        if (this.active < this.limit) {
+            this.active += 1;
+            return;
+        }
+        await new Promise<void>((resolve) => {
+            this.waiting.push(resolve);
+        });
+        this.active += 1;
+    }
+
+    release(): void {
+        this.active -= 1;
+        const next = this.waiting.shift();
+        if (next) next();
+    }
+
+    get inFlight(): number {
+        return this.active;
+    }
+}
+
+export const DEFAULT_MAX_IN_FLIGHT = 5;
+const limiter = new Semaphore(DEFAULT_MAX_IN_FLIGHT);
+
+/** Sets the run-wide cap on simultaneous HTTP requests (main.ts calls it with `maxConcurrency`). */
+export function setMaxInFlightRequests(limit: number): void {
+    limiter.limit = Math.max(1, Math.floor(limit));
+}
+
+/** Requests currently in flight (exposed for tests). */
+export function inFlightRequests(): number {
+    return limiter.inFlight;
+}
+
 /**
  * GET a site path and return the body. Retries with jittered exponential
  * backoff on network errors, timeouts, 408/425/429 and 5xx; every other
@@ -59,6 +114,7 @@ export async function fetchWithRetry(path: string, options: FetchOptions = {}): 
     const url = absoluteUrl(path);
     let lastError: Error = new Error('unreachable');
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        await limiter.acquire();
         try {
             const response = await fetch(url, {
                 headers: BROWSER_HEADERS,
@@ -71,6 +127,8 @@ export async function fetchWithRetry(path: string, options: FetchOptions = {}): 
         } catch (error) {
             if (error instanceof HttpError && !isRetriableStatus(error.status)) throw error;
             lastError = error instanceof Error ? error : new Error(String(error));
+        } finally {
+            limiter.release();
         }
         if (attempt < maxRetries) {
             const delay = Math.min(baseDelayMs * 2 ** attempt, 15_000) + Math.floor(Math.random() * 250);
@@ -81,16 +139,26 @@ export async function fetchWithRetry(path: string, options: FetchOptions = {}): 
     throw lastError;
 }
 
+/** Retries before a 500 on a record page is taken as "record missing" (3 attempts over ~3 s). */
+export const OPTIONAL_FETCH_RETRIES = 2;
+
 /**
  * Like fetchWithRetry but resolves to null when the record is gone. The
  * site answers HTTP 500 (not 404) for an unknown case/notice/breach id
- * (verified live: SV=1 -> 500), so for record pages a 500 that survives one
- * retry is treated as "missing" rather than as an outage - one withdrawn
- * record then degrades instead of aborting the run.
+ * (verified live: SV=1 -> the generic IIS "500 - Internal server error"
+ * page, identical for cases and notices), so for record pages a 500 that
+ * survives the retries is treated as "missing" rather than as an outage -
+ * one withdrawn record then degrades instead of aborting the run.
+ *
+ * Because that 500 is indistinguishable from a transient server error, the
+ * callers never treat a single NOT_FOUND as final: delivery defers such
+ * records to the next run(s) and the re-check needs two runs before it
+ * stops tracking a record (see delivery.ts / fetchRecords.ts), and a batch
+ * where too many listed records "vanish" at once fails the run.
  */
 export async function fetchOptional(path: string, options: FetchOptions = {}): Promise<string | null> {
     try {
-        return await fetchWithRetry(path, { maxRetries: 1, ...options });
+        return await fetchWithRetry(path, { maxRetries: OPTIONAL_FETCH_RETRIES, ...options });
     } catch (error) {
         if (error instanceof HttpError && (error.status === 404 || error.status === 410 || error.status === 500)) {
             return null;

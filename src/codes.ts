@@ -59,13 +59,22 @@ export const DEFENDANT_STATUSES: Record<string, string> = {
 /**
  * Notices only. The notice-type picklist is not in the wizard's FI list; the
  * codes come from the site's own Improvement/Prohibition radio filter, which
- * expands to `SF=NT / EO=IN / SV=<codes;>` (verified live: 08 -> 7,627
- * notices, 01;02;03 -> 22,424, 04..09 -> 7,650 of 30,226).
+ * expands to `SF=NT / EO=IN / SV=<codes;>`. Labels were verified live per
+ * single code on 2026-09-07 by reading the "Notice Type" column of page 1
+ * (count in brackets): 01 "Crown Improvement Notice" (16), 02 "FEPA
+ * Improvement Notice" (25), 03 "Improvement Notice" (22,383 - the ordinary
+ * one), 04 "ProhibitionDeferredCrownNotice" (1), 05
+ * "ProhibitionImmediateCrownNotic" (2), 06 "Prohibition Notice Deferred" (8),
+ * 07 "Prohibition Notice FEPA" (9), 08 "Prohibition Notice Immediate" (7,627),
+ * 09 "Prohibition Notice COMAH" (3); 30,226 notices in total.
+ * NOTE: any Improvement code (01/02/03) in the filter makes the site render
+ * the 8-column listing (adds Compliance Date + Notice Result) - see
+ * parsers/listing.ts.
  */
 export const NOTICE_TYPES: Record<string, string> = {
-    '01': 'Improvement Notice',
-    '02': 'Improvement Notice (Crown)',
-    '03': 'Improvement Notice (other)',
+    '01': 'Improvement Notice (Crown)',
+    '02': 'Improvement Notice (FEPA)',
+    '03': 'Improvement Notice',
     '04': 'Deferred Prohibition Notice (Crown)',
     '05': 'Immediate Prohibition Notice (Crown)',
     '06': 'Deferred Prohibition Notice',

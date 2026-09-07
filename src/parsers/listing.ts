@@ -1,4 +1,4 @@
-import type { CheerioAPI } from 'cheerio';
+import type { AnyNode, Cheerio, CheerioAPI } from 'cheerio';
 
 import type { DatasetName } from '../types.js';
 
@@ -19,6 +19,10 @@ export interface ListingRow {
     mainActivity: string | null;
     /** Notices only: "Improvement Notice", "Prohibition Notice Immediate", ... */
     noticeType: string | null;
+    /** Notices only, 8-column shape (any Improvement code in the NT filter): Compliance Date, DD/MM/YYYY. */
+    complianceDate: string | null;
+    /** Notices only, 8-column shape: "Ongoing" / "Complied with" (the site's "Notice Result" column). */
+    noticeResult: string | null;
 }
 
 export interface ListingPage {
@@ -31,51 +35,122 @@ export interface ListingPage {
     /** "Showing Page X of Y" - null on a zero-result page. */
     page: number | null;
     totalPages: number | null;
+    /** Column labels of the header row, in site order (6 or 8 for notices, 5 for convictions). */
+    columns: string[];
     rows: ListingRow[];
 }
 
-const CONVICTIONS_HEADER = /Case Number\s*Defendant'?s? Name\s*Offence Date\s*Local Authority\s*Main Activity/i;
-const NOTICES_HEADER =
-    /Notice Number\s*Recipient'?s? Name\s*Notice Type\s*Issue Date\s*Local Authority\s*Main Activity/i;
+/**
+ * Column key -> the header labels the site uses for it. Labels are compared
+ * after lower-casing and stripping everything but letters, so "Case&nbsp;Number",
+ * "Defendant's Name" and "Recipient's Name" all normalise cleanly.
+ *
+ * Live-verified shapes (2026-09-07):
+ * - convictions: Case Number | Defendant's Name | Offence Date | Local Authority | Main Activity
+ * - notices (no NT filter, or prohibition codes only):
+ *   Notice Number | Recipient's Name | Notice Type | Issue Date | Local Authority | Main Activity
+ * - notices (any Improvement code 01/02/03 in the NT filter, alone or mixed):
+ *   Notice Number | Recipient's Name | Notice Type | Issue Date | Compliance Date | Notice Result |
+ *   Local Authority | Main Activity
+ * Rows are therefore mapped by header NAME, never by position.
+ */
+type ColumnKey =
+    'id' | 'name' | 'date' | 'localAuthority' | 'mainActivity' | 'noticeType' | 'complianceDate' | 'noticeResult';
+
+const COLUMN_LABELS: Record<ColumnKey, string[]> = {
+    id: ['casenumber', 'noticenumber'],
+    name: ['defendantsname', 'recipientsname'],
+    date: ['offencedate', 'issuedate'],
+    localAuthority: ['localauthority'],
+    mainActivity: ['mainactivity', 'sicclassification'],
+    noticeType: ['noticetype'],
+    complianceDate: ['compliancedate'],
+    noticeResult: ['noticeresult', 'result'],
+};
+
+/** Columns every real listing of the register carries (the validity check). */
+const REQUIRED_COLUMNS: Record<DatasetName, ColumnKey[]> = {
+    convictions: ['id', 'name', 'date', 'localAuthority', 'mainActivity'],
+    notices: ['id', 'name', 'noticeType', 'date', 'localAuthority', 'mainActivity'],
+};
+
+const ID_LABEL: Record<DatasetName, string> = { convictions: 'casenumber', notices: 'noticenumber' };
+
+function normaliseLabel(text: string): string {
+    return text.toLowerCase().replace(/[^a-z]/g, '');
+}
 
 function clean(text: string): string | null {
     const t = text.replace(/\s+/g, ' ').trim();
     return t === '' ? null : t;
 }
 
-export function parseListingRows($: CheerioAPI, register: DatasetName): ListingRow[] {
-    const rows: ListingRow[] = [];
+interface HeaderMap {
+    /** Header labels as rendered (whitespace-collapsed). */
+    labels: string[];
+    /** Column key -> cell index. */
+    index: Partial<Record<ColumnKey, number>>;
+    /** The <table> element holding the header row. */
+    table: Cheerio<AnyNode>;
+}
+
+/**
+ * Finds the results table of the requested register by its header row (the
+ * <tr> whose <th> cells include "Case Number" / "Notice Number") and maps
+ * every recognised label to its cell index.
+ */
+function findHeader($: CheerioAPI, register: DatasetName): HeaderMap | null {
+    let found: HeaderMap | null = null;
     $('table tr').each((_i, tr) => {
+        if (found) return;
+        const ths = $(tr).children('th').toArray();
+        if (ths.length < 5) return;
+        const labels = ths.map((th) => clean($(th).text()) ?? '');
+        const normalised = labels.map(normaliseLabel);
+        if (!normalised.includes(ID_LABEL[register])) return;
+        const index: Partial<Record<ColumnKey, number>> = {};
+        for (const [key, aliases] of Object.entries(COLUMN_LABELS) as [ColumnKey, string[]][]) {
+            const at = normalised.findIndex((label) => aliases.includes(label));
+            if (at >= 0) index[key] = at;
+        }
+        found = { labels, index, table: $(tr).closest('table') };
+    });
+    return found;
+}
+
+function rowsFromHeader($: CheerioAPI, header: HeaderMap): ListingRow[] {
+    const rows: ListingRow[] = [];
+    const idAt = header.index.id ?? 0;
+    header.table.find('tr').each((_i, tr) => {
         const cells = $(tr).children('td').toArray();
-        if (cells.length < 5) return;
-        const link = $(cells[0]).find('a[href*="_details.asp"]').first();
+        if (cells.length < header.labels.length) return;
+        const link = $(cells[idAt]).find('a[href*="_details.asp"]').first();
         const href = link.attr('href') ?? '';
         const match = href.match(DETAIL_LINK_RE);
         if (!match) return;
-        const text = (i: number): string | null => (cells[i] ? clean($(cells[i]).text()) : null);
-        if (register === 'convictions') {
-            rows.push({
-                id: match[1],
-                detailHref: href,
-                name: text(1),
-                date: text(2),
-                localAuthority: text(3),
-                mainActivity: text(4),
-                noticeType: null,
-            });
-        } else {
-            rows.push({
-                id: match[1],
-                detailHref: href,
-                name: text(1),
-                noticeType: text(2),
-                date: text(3),
-                localAuthority: text(4),
-                mainActivity: text(5),
-            });
-        }
+        const text = (key: ColumnKey): string | null => {
+            const at = header.index[key];
+            return at === undefined || !cells[at] ? null : clean($(cells[at]).text());
+        };
+        rows.push({
+            id: match[1],
+            detailHref: href,
+            name: text('name'),
+            date: text('date'),
+            localAuthority: text('localAuthority'),
+            mainActivity: text('mainActivity'),
+            noticeType: text('noticeType'),
+            complianceDate: text('complianceDate'),
+            noticeResult: text('noticeResult'),
+        });
     });
     return rows;
+}
+
+/** Rows of the register's results table, mapped by header name (empty when the header is not present). */
+export function parseListingRows($: CheerioAPI, register: DatasetName): ListingRow[] {
+    const header = findHeader($, register);
+    return header ? rowsFromHeader($, header) : [];
 }
 
 /**
@@ -87,16 +162,16 @@ export function parseListingRows($: CheerioAPI, register: DatasetName): ListingR
  * - zero results: "0 Matching results found" and no "Showing Page" line;
  * - SQL error (unknown column, bad join): "Sorry ... some form of error ..."
  *   AND "0 Matching results found", HTTP 200 - must be checked first;
- * - every real listing page carries the column header row.
+ * - every real listing page carries the column header row, in the 6- or the
+ *   8-column shape for notices (see COLUMN_LABELS) - all required columns must be present.
  */
 export function parseListingPage($: CheerioAPI, register: DatasetName): ListingPage {
     const text = $('body').text().replace(/\s+/g, ' ');
     const isErrorPage = /some form of error/i.test(text);
-    const headerRe = register === 'convictions' ? CONVICTIONS_HEADER : NOTICES_HEADER;
-    const hasHeader = headerRe.test(text);
+    const header = findHeader($, register);
+    const hasHeader = header !== null && REQUIRED_COLUMNS[register].every((key) => header.index[key] !== undefined);
     const total = text.match(/(\d+) Matching results found/);
     const paging = text.match(/Showing Page (\d+) of (\d+)/);
-    const rows = parseListingRows($, register);
     const isListingPage = !isErrorPage && hasHeader && total !== null;
     return {
         isListingPage,
@@ -104,7 +179,8 @@ export function parseListingPage($: CheerioAPI, register: DatasetName): ListingP
         totalMatching: isListingPage && total ? Number(total[1]) : null,
         page: isListingPage && paging ? Number(paging[1]) : null,
         totalPages: isListingPage && paging ? Number(paging[2]) : null,
-        rows: isListingPage ? rows : [],
+        columns: isListingPage && header ? header.labels : [],
+        rows: isListingPage && header ? rowsFromHeader($, header) : [],
     };
 }
 

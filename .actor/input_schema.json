@@ -39,9 +39,9 @@
             "editor": "textfield"
         },
         "mainActivityContains": {
-            "title": "Main activity (SIC) contains",
+            "title": "Main activity (SIC code or text)",
             "type": "string",
-            "description": "SIC code or activity text of the offence location, e.g. '43910' or 'ROOFING'.",
+            "description": "A numeric value (2-5 digits) matches the SIC code of the offence location, prefix included ('43910' = roofing activities, '43' = all specialised construction); any other text matches the activity description ('ROOFING', 'MACHINING'). The site keeps the two in different columns, so a code never matches as text and vice versa.",
             "editor": "textfield"
         },
         "region": {
@@ -186,15 +186,15 @@
         "noticeTypes": {
             "title": "Notice types (notices)",
             "type": "array",
-            "description": "HSE's nine notice-type codes. Select several to get their union. Notices only.",
+            "description": "HSE's nine notice-type codes (labels verified against the register, 2026-09-07). '03' is the ordinary Improvement Notice (22,000+); '01' and '02' are the rare Crown / FEPA variants. Select several to get their union. Notices only.",
             "editor": "select",
             "items": {
                 "type": "string",
                 "enum": ["01", "02", "03", "04", "05", "06", "07", "08", "09"],
                 "enumTitles": [
-                    "Improvement Notice",
                     "Improvement Notice (Crown)",
-                    "Improvement Notice (other)",
+                    "Improvement Notice (FEPA)",
+                    "Improvement Notice",
                     "Deferred Prohibition Notice (Crown)",
                     "Immediate Prohibition Notice (Crown)",
                     "Deferred Prohibition Notice",
@@ -307,7 +307,7 @@
         "eventTypes": {
             "title": "Event types to deliver",
             "type": "array",
-            "description": "SANCTION = a conviction not delivered before; NEW_LISTING = a notice not delivered before; UPDATED = a record you already received whose case/notice page changed (a notice complied with, a revised compliance date, a breach or hearing added) - delta mode only.",
+            "description": "SANCTION = a conviction not delivered before; NEW_LISTING = a notice not delivered before; UPDATED = a record you already received whose case/notice page changed (a notice complied with, a revised compliance date, a breach or hearing added) - delta mode only. Applied by the delta engine, not by the site: changing it later does not fork the delta memory.",
             "editor": "select",
             "items": {
                 "type": "string",
@@ -380,7 +380,7 @@
         "maxConcurrency": {
             "title": "Parallel record requests",
             "type": "integer",
-            "description": "How many records are fetched at once. The register is a classic-ASP site that answered 17 concurrent requests without throttling; 5 keeps a 100-record run under a minute.",
+            "description": "Run-wide cap on simultaneous HTTP requests (listing, detail, breach and party pages together - never more than this in flight). The register is a classic-ASP site that answered 17 concurrent requests without throttling; 5 keeps a 100-record run around a minute.",
             "editor": "number",
             "default": 5,
             "minimum": 1,

@@ -101,7 +101,11 @@
             "isFepa": { "type": ["boolean", "null"], "title": "FEPA notice" },
             "servedDate": { "type": ["string", "null"], "title": "Served on (raw)" },
             "servedDateIso": { "type": ["string", "null"], "title": "Served on" },
-            "complianceDate": { "type": ["string", "null"], "title": "Compliance date (raw)" },
+            "complianceDate": {
+                "type": ["string", "null"],
+                "title": "Compliance date (raw)",
+                "description": "From the notice page, or from the listing when an Improvement notice type is selected (8-column listing)."
+            },
             "complianceDateIso": { "type": ["string", "null"], "title": "Compliance date" },
             "revisedComplianceDate": { "type": ["string", "null"], "title": "Revised compliance date (raw)" },
             "revisedComplianceDateIso": { "type": ["string", "null"], "title": "Revised compliance date" },
@@ -117,7 +121,12 @@
                 "description": "Negative once the effective compliance date has passed."
             },
             "hasRevisedComplianceDate": { "type": ["boolean", "null"], "title": "Has revised compliance date" },
-            "result": { "type": ["string", "null"], "title": "Result", "example": "Ongoing" },
+            "result": {
+                "type": ["string", "null"],
+                "title": "Result",
+                "example": "Ongoing",
+                "description": "Ongoing / Complied with (Improvement Notices only). From the notice page, or from the listing when an Improvement notice type is selected."
+            },
             "isOngoing": { "type": ["boolean", "null"], "title": "Is ongoing" },
             "isCompliedWith": { "type": ["boolean", "null"], "title": "Complied with" },
             "isOverdue": {

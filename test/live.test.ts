@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { describe, expect, it } from 'vitest';
 
+import { NOTICE_TYPES } from '../src/codes.js';
 import { detailContentHash, fetchDetailFor, fetchRecords, recheckKnown } from '../src/fetchRecords.js';
 import { fetchWithRetry } from '../src/http.js';
 import { resolveInput } from '../src/input.js';
@@ -114,6 +115,81 @@ describe.skipIf(!process.env.LIVE)('live HSE register integration', () => {
         expect(records.every((r) => r.recordType === 'notice' && /Prohibition/i.test(r.noticeTypeListing ?? ''))).toBe(
             true,
         );
+    }, 120_000);
+
+    it('an Improvement code renders the 8-column listing: validated as a listing, columns mapped by name', async () => {
+        const { records, walk } = await run('notices', {
+            noticeTypes: ['03'],
+            fetchDetail: false,
+            maxItemsPerDataset: 10,
+        });
+        expect(walk.totalMatching).toBeGreaterThan(20_000);
+        expect(records.length).toBe(10);
+        for (const r of records) {
+            if (r.recordType !== 'notice') throw new Error('expected a notice');
+            expect(r.noticeTypeListing).toBe('Improvement Notice');
+            expect(r.localAuthority).not.toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+            expect(r.mainActivity).not.toMatch(/^(Ongoing|Complied with)$/);
+            expect(r.complianceDateIso).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+            expect(r.result).toMatch(/^(Ongoing|Complied with)$/);
+            expect(typeof r.isOngoing).toBe('boolean');
+        }
+    }, 120_000);
+
+    it('a mixed Improvement + Prohibition selection (03 + 08) is one 8-column listing with both types', async () => {
+        const { records, walk } = await run('notices', {
+            noticeTypes: ['03', '08'],
+            fetchDetail: false,
+            maxItemsPerDataset: 20,
+        });
+        expect(walk.totalMatching).toBeGreaterThan(25_000);
+        expect(records.length).toBe(20);
+        const types = new Set(records.map((r) => (r.recordType === 'notice' ? r.noticeTypeListing : null)));
+        for (const t of types) expect(t).toMatch(/^(Improvement Notice|Prohibition Notice Immediate)$/);
+        expect(records.every((r) => r.localAuthority !== null && !/^\d{2}\//.test(r.localAuthority))).toBe(true);
+    }, 120_000);
+
+    it('every noticeTypes code selects the notice type its label says (page 1 wording per single code)', async () => {
+        const expectedWording: Record<string, RegExp> = {
+            '01': /^Crown Improvement Notice$/,
+            '02': /^FEPA Improvement Notice$/,
+            '03': /^Improvement Notice$/,
+            '04': /^ProhibitionDeferredCrownNotice$/,
+            '05': /^ProhibitionImmediateCrownNotic/,
+            '06': /^Prohibition Notice Deferred$/,
+            '07': /^Prohibition Notice FEPA$/,
+            '08': /^Prohibition Notice Immediate$/,
+            '09': /^Prohibition Notice COMAH$/,
+        };
+        for (const code of Object.keys(NOTICE_TYPES)) {
+            const { queries } = resolveInput({ noticeTypes: [code] }, NOW);
+            const page = parseListingPage(
+                cheerio.load(await fetchWithRetry(listingPath(queries.notices, 1))),
+                'notices',
+            );
+            expect(page.isListingPage, `code ${code}`).toBe(true);
+            expect(page.totalMatching, `code ${code}`).toBeGreaterThan(0);
+            expect(page.rows.length, `code ${code}`).toBeGreaterThan(0);
+            for (const row of page.rows) expect(row.noticeType, `code ${code}`).toMatch(expectedWording[code]);
+        }
+        // The plain "Improvement Notice" is code 03 and is by far the largest type.
+        const { queries } = resolveInput({ noticeTypes: ['03'] }, NOW);
+        const page = parseListingPage(cheerio.load(await fetchWithRetry(listingPath(queries.notices, 1))), 'notices');
+        expect(page.totalMatching).toBeGreaterThan(20_000);
+        expect(NOTICE_TYPES['03']).toBe('Improvement Notice');
+        expect(NOTICE_TYPES['01']).toMatch(/Crown/);
+        expect(NOTICE_TYPES['02']).toMatch(/FEPA/);
+    }, 180_000);
+
+    it('a numeric mainActivityContains matches the SIC code column (a text value the description column)', async () => {
+        const byCode = await run('convictions', { mainActivityContains: '43910', fetchDetail: false });
+        expect(byCode.walk.totalMatching).toBeGreaterThan(0);
+        expect(byCode.walk.totalMatching).toBeLessThan(200);
+        expect(byCode.records.length).toBe(byCode.walk.totalMatching);
+        expect(byCode.records.every((r) => r.mainActivity?.startsWith('43910'))).toBe(true);
+        const byText = await run('convictions', { mainActivityContains: 'ROOFING', fetchDetail: false });
+        expect(byText.records.every((r) => /ROOFING/i.test(r.mainActivity ?? ''))).toBe(true);
+        expect(byText.walk.totalMatching).toBeGreaterThanOrEqual(byCode.walk.totalMatching);
     }, 120_000);
 
     it('a zero-result query ends cleanly instead of being mistaken for a block', async () => {
