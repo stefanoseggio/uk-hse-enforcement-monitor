@@ -53,3 +53,27 @@ export function extractIdParam(href: string, paramName = 'SV'): string | null {
     const re = new RegExp(`[?&]${paramName}=(\\d+)`);
     return href.match(re)?.[1] ?? null;
 }
+
+/** The first table header, e.g. "Details for Case No. 4858770" or "Notice 316005113 served against <a>X</a> on 25/07/2026". */
+export function pageHeaderText($: CheerioAPI): string {
+    return $('table').first().find('th').first().text().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Conviction detail pages of fatal cases carry an extra single-cell row
+ * "This case did result from the investigation of a fatality" (verified
+ * live on case 4849124, 2026-09-07); non-fatal cases have no such row.
+ */
+export function parseFatalityFlag($: CheerioAPI): boolean {
+    const text = $('table').first().text().replace(/\s+/g, ' ');
+    return /did result from the investigation of a fatality/i.test(text);
+}
+
+/**
+ * Detail pages are label/value tables; anything else (the site's 500 page,
+ * a maintenance page) has no "Details for" / "served against" header.
+ */
+export function isDetailPage($: CheerioAPI): boolean {
+    const header = pageHeaderText($);
+    return /Details for|served against/i.test(header);
+}

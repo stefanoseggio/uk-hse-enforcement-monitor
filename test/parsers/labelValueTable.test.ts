@@ -8,26 +8,29 @@ import {
     allHrefsMatching,
     extractIdParam,
     firstHrefMatching,
+    isDetailPage,
+    pageHeaderText,
+    parseFatalityFlag,
     parseLabelValueRows,
 } from '../../src/parsers/labelValueTable.js';
 
 const fixturesDir = fileURLToPath(new URL('../fixtures', import.meta.url));
+const load = (name: string) => cheerio.load(readFileSync(`${fixturesDir}/${name}`, 'utf-8'));
 
 describe('parseLabelValueRows against real conviction detail page', () => {
-    const html = readFileSync(`${fixturesDir}/conviction_detail_4858770.html`, 'utf-8');
-    const $ = cheerio.load(html);
+    const $ = load('conviction_detail_4858770.html');
     const fields = parseLabelValueRows($);
 
     it('extracts the flat label/value fields', () => {
-        expect(fields['Defendant']).toBe('Mill House Metals Limited');
-        expect(fields['Description']).toBe('Lack of ELCI');
+        expect(fields.Defendant).toBe('Mill House Metals Limited');
+        expect(fields.Description).toBe('Lack of ELCI');
         expect(fields['Offence Date']).toBe('26/09/2025');
         expect(fields['Total Fine']).toBe('£1,000.00');
         // real source label is "Total&nbsp;Costs&nbsp;Awarded&nbsp;to&nbsp;HSE" - must be nbsp-normalized
         expect(fields['Total Costs Awarded to HSE']).toBe('£2,000.00');
-        expect(fields['Region']).toBe('North West');
+        expect(fields.Region).toBe('North West');
         expect(fields['Local Authority']).toBe('Halton UA');
-        expect(fields['Industry']).toBe('Extractive and utility supply industries');
+        expect(fields.Industry).toBe('Extractive and utility supply industries');
         expect(fields['Main Activity']).toBe('38320 - RECOVERY OF SORTED MATERIALS');
         expect(fields['Type of Location']).toBe('Fixed');
         expect(fields['HSE Group']).toBe('IVDIIU2G7');
@@ -36,7 +39,7 @@ describe('parseLabelValueRows against real conviction detail page', () => {
     });
 
     it('joins <BR>-separated address lines with a comma, not run together', () => {
-        expect(fields['Address']).toBe(
+        expect(fields.Address).toBe(
             'Hale Road/Millhouse Metals, Millhouse Metals, Hale Road, WIDNES, Cheshire, WA8 0TL, England',
         );
     });
@@ -55,49 +58,87 @@ describe('parseLabelValueRows against real conviction detail page', () => {
         expect(breachHrefs.length).toBeGreaterThan(0);
         expect(extractIdParam(breachHrefs[0])).toBe('4858770001');
     });
-});
 
-describe('parseLabelValueRows against real breach detail page', () => {
-    const html = readFileSync(`${fixturesDir}/conviction_breach_4858770001.html`, 'utf-8');
-    const $ = cheerio.load(html);
-    const fields = parseLabelValueRows($);
-
-    it('extracts court, act and fine fields, including the label-less trailing empty pair', () => {
-        expect(fields['Defendant']).toBe('Mill House Metals Limited');
-        expect(fields['Court Name']).toBe('Liverpool');
-        expect(fields['Court Level']).toBe('Magistrates Court');
-        expect(fields['Act']).toBe('Employers Liability Compulsory Insurance Act 1969, Section 1, Sub Section 1');
-        expect(fields['Date of Hearing']).toBe('15/04/2026');
-        expect(fields['Result']).toBe('Fine');
-        expect(fields['Fine']).toBe('£1,000.00');
-        // the row's 3rd/4th cells are both empty <td></td> - must not appear as a "" key
-        expect(fields['']).toBeUndefined();
+    it('reads the header, recognises a detail page and a non-fatal case', () => {
+        expect(pageHeaderText($)).toBe('Details for Case No. 4858770');
+        expect(isDetailPage($)).toBe(true);
+        expect(parseFatalityFlag($)).toBe(false);
     });
 });
 
-describe('parseLabelValueRows against real notice detail page', () => {
-    const html = readFileSync(`${fixturesDir}/notice_detail_316005113.html`, 'utf-8');
-    const $ = cheerio.load(html);
+describe('fatal multi-breach conviction page (case 4849124)', () => {
+    const $ = load('conviction_detail_4849124_fatal_multibreach.html');
+
+    it('carries the fatality row and links only the generic breach list, not its own breaches', () => {
+        expect(parseFatalityFlag($)).toBe(true);
+        expect(allHrefsMatching($, 'breach_details.asp')).toEqual([]);
+        expect(parseLabelValueRows($)['Total Fine']).toBe('£400,000.00');
+    });
+});
+
+describe('parseLabelValueRows against real breach detail pages', () => {
+    it('extracts court, act and fine fields, including the label-less trailing empty pair', () => {
+        const fields = parseLabelValueRows(load('conviction_breach_4858770001.html'));
+        expect(fields.Defendant).toBe('Mill House Metals Limited');
+        expect(fields['Court Name']).toBe('Liverpool');
+        expect(fields['Court Level']).toBe('Magistrates Court');
+        expect(fields.Act).toBe('Employers Liability Compulsory Insurance Act 1969, Section 1, Sub Section 1');
+        expect(fields['Date of Hearing']).toBe('15/04/2026');
+        expect(fields.Result).toBe('Fine');
+        expect(fields.Fine).toBe('£1,000.00');
+        // the row's 3rd/4th cells are both empty <td></td> - must not appear as a "" key
+        expect(fields['']).toBeUndefined();
+    });
+
+    it('reads a regulation-based breach with a suspended prison sentence', () => {
+        const fields = parseLabelValueRows(load('conviction_breach_4763937001_prison_suspended.html'));
+        expect(fields.Act).toBe('');
+        expect(fields.Regulation).toBe('Construction (Design and Management) Regulations 2015 (No 15) para 2');
+        expect(fields.Result).toBe('Prison Suspended');
+        expect(fields.Fine).toBe('£0.00');
+        expect(fields['Court Name']).toBe('Westminster Magistrates Court');
+    });
+});
+
+describe('parseLabelValueRows against real notice detail pages', () => {
+    const $ = load('notice_detail_316005113.html');
     const fields = parseLabelValueRows($);
 
     it('extracts fields even though notice labels are plain text, not <strong>', () => {
         expect(fields['Notice Type']).toBe('Improvement Notice');
         expect(fields['Compliance Date']).toBe('30/06/2027');
-        expect(fields['Result']).toBe('Ongoing');
-        expect(fields['Region']).toBe('Wales & South West');
+        expect(fields.Result).toBe('Ongoing');
+        expect(fields.Region).toBe('Wales & South West');
         expect(fields['Local Authority']).toBe('Neath & Port Talbot UA');
-        expect(fields['Industry']).toBe('Manufacturing');
+        expect(fields.Industry).toBe('Manufacturing');
         expect(fields['HSE Directorate']).toBe('INSPECTION DIVISION');
+        expect(isDetailPage($)).toBe(true);
     });
 
     it('preserves the multi-line description as real newlines (no <br> tags there, unlike Address)', () => {
-        expect(fields['Description']).toContain('IN/090626/LPEC/MG19 -316005113');
-        expect(fields['Description']).toContain('IN/090626/LPEC/MG21 - 316005207');
-        expect(fields['Description']!.split('\n').length).toBeGreaterThan(1);
+        expect(fields.Description).toContain('IN/090626/LPEC/MG19 -316005113');
+        expect(fields.Description).toContain('IN/090626/LPEC/MG21 - 316005207');
+        expect(fields.Description!.split('\n').length).toBeGreaterThan(1);
     });
 
     it('finds the recipient id via the real recipient_details.asp href', () => {
         const href = firstHrefMatching($, 'recipient_details.asp');
         expect(extractIdParam(href!)).toBe('1108773');
+    });
+
+    it('reads an amended (complied-with) notice and a prohibition notice without Result rows', () => {
+        const complied = parseLabelValueRows(load('notice_detail_315474881_complied.html'));
+        expect(complied.Result).toBe('Complied with');
+        expect(complied['Revised Compliance Date']).toBe('06/03/2026');
+        const prohibition = parseLabelValueRows(load('notice_detail_316063545_prohibition.html'));
+        expect(prohibition['Notice Type']).toBe('Immediate Prohibition Notice');
+        expect(prohibition.Result).toBeUndefined();
+        expect(prohibition['Compliance Date']).toBeUndefined();
+    });
+
+    it('does not mistake the site 500 page for a detail page', () => {
+        expect(isDetailPage(cheerio.load('<html><body><h2>500 - Internal server error.</h2></body></html>'))).toBe(
+            false,
+        );
     });
 });

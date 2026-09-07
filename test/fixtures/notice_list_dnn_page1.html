@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en"><!-- InstanceBegin template="/Templates/v5-hse.dwt" codeOutsideHTMLIsLocked="true" -->
+<head>
+	
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	
+
+
+<link rel="stylesheet" href="../assets/v4-css/core.min.css" type="text/css" media="screen,print" />
+	
+
+
+
+
+<link rel="stylesheet" href="../assets/v4-css/website.min.css" type="text/css" media="screen,print" />
+
+<!-- V5 -->
+<link rel="stylesheet" href="../assets/v5-css/v5.min.css" type="text/css" media="screen,print" />
+
+
+
+<!-- InstanceBeginEditable name="doctitle" -->
+<title>Notices found - Enforcement notices public</title>
+<meta name="keywords" content="hse, enforcement notices public, prosecutions, conviction, enforce, defendant" />
+<meta name="description" content="This site provides the detail of HSE prosecutions resulting in a successful conviction within the last 5 years." />
+<!-- Custom CSS -->
+<style type = text/css>
+table.tablenumgrid th a{
+  color: #FFF !important;
+}
+	</style>
+<!--
+Page Author:		Ian Grimes, Integris. Based on work by Kieth Lawrence, Smart421
+Last Modified:	01/11/2010
+Description:		This ASP Page is the Notice Hitlist for the Enforcement Notices Application
+Page Version:		1.1
+Changes Made:
+-->
+
+<!-- The following include file contains the MS ADO constant definitions -->
+
+<!-- The following include file contains the database connection string -->
+
+
+<head>
+<meta name="GENERATOR" content="Microsoft FrontPage 4.0">
+<meta name="ProgId" content="FrontPage.Editor.Document">
+</head>
+
+
+<!-- InstanceEndEditable -->
+<meta name="HSE.contentType" content="default" />
+<link rel="shortcut icon" href="../favicon.ico" />
+<link rel="apple-touch-icon" href="../assets/v4-images/shared/apple-touch-icon.png" />
+<link rel="home" href="../index.htm" />
+
+</head>
+<body class="abouthse normalFont">
+
+
+<div id="top"> 
+ <a href="#contentContainer" class="skip">Skip to content</a> 
+ 
+
+</div>
+
+
+<div id="printBanner"> <img src="../assets/v4-images/website/print/print-logo.jpg" width="193" height="65" alt="Health and Safety Executive" id="printLogo"/> </div>
+<div id="cookieContainer" class="cf">
+  <div id="cookieNotify" class="cf">
+    <p>This website uses non-intrusive cookies to improve your user experience. You can visit our <a href="../privacy-cookies.htm">cookie privacy page</a> for more information.</p>
+  </div>
+</div>
+	
+<!-- Off canvas navigation -->
+<div id="off-canvas-container" class="full-width-container">
+	
+<div class="c-offcanvas-content-wrap responsive-container">
+        <a href="#offCanvas" id="triggerButton"></a>
+         <!-- Your Main Content goes here -->
+		
+	
+    <div id="offCanvasHeaderLogo" class="offCanvasHeaderLogo"><a href="https://www.hse.gov.uk/index.htm">Health and Safety<br />
+      Executive</a></div>
+       
+    </div>
+    
+    <div id="offCanvas" class="responsive-nav-container">
+	
+	<div>
+		<div id="off-canvas-top">
+		<div id="headerLogoOffCanvas" class="offCanvasHeaderLogo"><a href="https://www.hse.gov.uk/index.htm">Health and Safety<br />
+      Executive</a></div>
+		<div class="off-canvas-close">
+			<a class="js-offcanvas-close"></a>
+		</div>
+		</div>
+		<ul id="off-canvas-menu">
+		 <li><a href="https://www.hse.gov.uk/index.htm">Home</a></li>
+		 <li><a href="https://www.hse.gov.uk/news/index.htm">News</a></li>
+		 <li><a href="https://www.hse.gov.uk/guidance/index.htm">Guidance</a></li>
+		 <li><a href="https://www.hse.gov.uk/aboutus/index.htm">About HSE</a></li>
+		 <li><a href="https://books.hse.gov.uk/">Books</a></li>
+		 <li><a href="https://www.hse.gov.uk/news/subscribe/index.htm">Free updates</a></li>
+		 <li><a href="https://www.hse.gov.uk/contact/index.htm">Contact</a></li>
+		</ul>
+	</div>
+	
+	
+	</div>
+	
+</div>	
+	
+	
+	
+	
+<header id="headerContainer" class="cf">
+  <div id="header" class="cf"> 
+    <div id="headerLogo" class="headerLogo"><a href="https://www.hse.gov.uk/index.htm">Health and Safety<br />
+      Executive</a></div>
+       
+	
+    <div id="globalSearch">
+      <gcse:searchbox-only></gcse:searchbox-only>
+    </div>
+     </div>
+  <div id="navigationContainer" class="cf">
+    <ul class="navDropdown">
+      <li class="home"><a href="https://www.hse.gov.uk/index.htm">Home</a></li>
+      <li class="news"><a href=".https://www.hse.gov.uk/news/index.htm">News</a><span class="arrow"></span>
+        <div class="navDrop navDropNews"><span class="navDropGap"></span>
+          <div class="navDropContent cf"></div>
+        </div>
+      </li>
+      <li class="guidance"><a href="https://www.hse.gov.uk/guidance/index.htm">Guidance</a><span class="arrow"></span>
+        <div class="navDrop navDropGuidance"><span class="navDropGap"></span>
+          <div class="navDropContent cf"></div>
+        </div>
+      </li>     
+      <li class="abouthse"><a href="https://www.hse.gov.uk/aboutus/index.htm">About HSE</a><span class="arrow"></span>
+        <div class="navDrop navDropAboutHSE"><span class="navDropGap"></span>
+          <div class="navDropContent cf"></div>
+        </div>
+      </li>
+	  <li class="hseBooks"><a href="https://books.hse.gov.uk/">Books</a><span class="arrow"></span>
+        <div class="navDrop navDropAboutHSE"><span class="navDropGap"></span>
+          <div class="navDropContent cf"></div>
+        </div>
+      </li>
+		
+		
+	  <li class="freeUpdates"><a href="https://www.hse.gov.uk/news/subscribe/index.htm">Free updates</a><span class="arrow"></span>
+        <div class="navDrop navDropFreeUpdates"><span class="navDropGap"></span>
+          <div class="navDropContent cf"></div>
+        </div>
+      </li>
+		
+		
+      <li class="contact"><a href="https://www.hse.gov.uk/contact/index.htm">Contact</a><span class="arrow"></span>
+        <div class="navDrop navDropContact"><span class="navDropGap"></span>
+          <div class="navDropContent cf"></div>
+        </div>
+      </li>
+		
+    </ul>
+    
+  </div>
+	
+	
+<!--
+    <div id="notification-bar">
+		
+	 <div class="notification-container fixed-container">
+		 
+	 <p class="notification-message"> -->
+		 
+	 <!-- InstanceBeginEditable name="notification-message" --> 
+
+
+	 <!-- InstanceEndEditable -->
+	 
+	<!-- </p>
+		 
+	 <a href="#hide-message" class="notification-hide-button" role="button" aria-controls="notification-bar">Hide&nbsp;message</a>
+		 
+	 <div id="hide-message"></div>
+		
+	 </div>
+      
+    </div> -->
+
+    
+
+	
+	
+	
+</header>
+
+
+ 
+	
+	
+
+
+<nav id="breadCrumb" aria-label="Breadcrumb">
+	<div class="breadCrumbContainer">
+		
+		<!-- InstanceBeginEditable name="Breadcrumbs" -->
+    <ol>        <li class="home"><a href="https://www.hse.gov.uk/index.htm">HSE</a></li>
+        <li><a href="https://www.hse.gov.uk/aboutus/index.htm">About HSE</a></li>
+        <li><a href="https://www.hse.gov.uk/enforce/index.htm">Regulating and enforcing</a></li>
+        <li><a href="https://www.hse.gov.uk/enforce/convictions.htm">Register of convictions &amp; notices</a></li>
+      <li><a href="../default.asp">Enforcement notices public</a></li>
+      <li>Notices found</li>
+    </ol>
+    <!-- InstanceEndEditable -->
+		
+	</div>
+	
+	<div id="backTo">
+	  
+	  <p class="backto"><a id="backnav" href="index.htm"><i class="fas fa-arrow-left"></i> Back to</a></p>
+	  
+	</div>
+	
+
+</nav>
+	
+ 
+
+	
+
+
+<!-- InstanceBeginEditable name="beta-survey" --> 
+
+
+<!-- InstanceEndEditable -->
+
+ 
+	
+
+
+<div id="pageContainer" class="cf v5" xmlns:argot="http://purl.oclc.org/argot/" xmlns:dc="http://purl.org/dc/terms/" xmlns:foaf="http://xmlns.com/foaf/0.1/" xmlns:v="http://www.w3.org/2006/vcard/ns#" xmlns:dbp="http://dbpedia.org/resource/">
+ 
+	
+
+<!-- Beta content page -->
+
+
+	
+
+<nav id="navSecondary">
+<!-- InstanceBeginEditable name="Subnav" --><!-- #BeginLibraryItem "/Library/Notices-Public.lbi" -->
+<div id="menu" class="slinky-menu slinky-theme-default"> 
+<ul> 
+ <li class="first"><a href="http://hse.gov.uk/enforce/prosecutions.htm">Enforcement databases</a> </li> 
+  <li><a href="../default.asp">Enforcement notices public</a></li>
+  <li><a href="../search/standard/default.asp">Search the database</a>
+    <ul>
+      <li><a href="../search/advanced/default.asp">Advanced </a></li>
+      <li><a href="../search/location/default.asp">Geographical</a>
+        <ul>
+          <li><a href="../search/location/map_country.asp">Country</a></li>
+          <li><a href="../search/location/map_hsereg.asp">HSE Division</a></li>
+          <li><a href="../search/location/map_rda.asp">Region</a></li>
+        </ul>
+      </li>
+      <li><a href="../search/industry/default.asp">Industry</a></li>
+      <li><a href="notice_list.asp?ST=N&rdoNType=&NT=&SN=F&EO=<&SF=NIS&SV=31/12/2100&SO=DNIS">New cases</a></li>
+    </ul>  
+    <li><a href="../help/index.htm">Help</a></li>
+</li>
+</ul>
+</div>
+<h3>Related content</h3>
+<ul>
+  <li><a href="https://www.hse.gov.uk/statistics/index.htm">Statistics</a></li>
+  <li><a href="https://www.hse.gov.uk/enforce/index.htm">Enforcing health &amp; safety</a> </li> 
+  <li><a href="https://www.hse.gov.uk/lau/enforcement.htm">Local authority enforcement</a></li>
+
+<li><a href="https://www.hse.gov.uk/regulation/compliancecode/index.htm">Regulators' Compliance Code</a></li>
+  <li><a href="https://www.hse.gov.uk/scotland/scordat.htm">Scotland Concordat</a></li>
+  <li><a href="https://www.hse.gov.uk/aboutus/howwework/framework/wales-concordat.htm">Wales Concordat</a></li>
+</ul>
+<!-- #EndLibraryItem --><!-- InstanceEndEditable -->
+</nav>
+
+
+<main id="contentContainer" class="columnbetacontentpage"> 
+	
+   
+	  
+	  
+  <!-- InstanceBeginEditable name="content" -->
+    <h1>Notices found</h1>
+    
+    <p>30226 Matching results found from 30226 total records
+      
+      : Showing Page 1 of 3023, results 1 to 10
+    </p>
+    <form method="POST" action="/notices/notices/notice_list.asp?ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" class="hseform">
+      <fieldset>
+        <legend>Filter</legend>
+        <div>
+          <label for="sortBy" class="inline">Sort by</label>
+          <input type="hidden" name="PN" size="5" value="1">
+          <select name="SO" id="sortBy" class="inline">
+            <option value="ANN" >Notice Number (Ascending : A to Z)</option>
+            <option value="DNN" selected>Notice Number (Descending : Z to A)</option>
+            <option value="ARN" >Recipient (Ascending : A to Z)</option>
+            <option value="DRN" >Recipient (Descending : Z to A)</option>
+            <option value="ANT" >Notice Type (Ascending : A to Z)</option>
+            <option value="DNT" >Notice Type (Descending : Z to A)</option>
+            <option value="ANIS" >Issue Date (Ascending : A to Z)</option>
+            <option value="DNIS" >Issue Date (Descending : Z to A)</option>
+            
+            <option value="ANLA" >Local Authority (Ascending : A to Z)</option>
+            <option value="DNLA" >Local Authority (Descending : Z to A)</option>
+            <option value="ASIC" >Main Activity (Ascending : A to Z)</option>
+            <option value="DSIC" >Main Activity (Descending : Z to A)</option>
+          </select>
+          <button type="submit">Search</button>
+        </div>
+      </fieldset>
+    </form>
+    <table summary="The results of the search" class="tablenumgrid" width="100%">
+      <thead>
+        <tr>
+          <th title="Notice Number">Notice Number</th>
+          <th title="Recipient's Name">Recipient's Name</th>
+          <th title="Notice Type">Notice Type</th>
+          <th title="Issue Date">Issue Date</th>
+          
+          <th title="Local Authority">Local Authority</th>
+          <th title="SIC Classification">Main Activity</th>
+        </tr>
+      </thead>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316153979"
+		   href="notice_details.asp?SF=CN&amp;SV=316153979"> 316153979</a></td>
+        <td>Chase Accident Repairs Limited</td>
+        <td>Prohibition Notice Immediate</td>
+        <td>24/06/2026</td>
+        
+        <td>Cannock Chase</td>
+        <td>MVR</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316149757"
+		   href="notice_details.asp?SF=CN&amp;SV=316149757"> 316149757</a></td>
+        <td>Hughes Waste Limited</td>
+        <td>Prohibition Notice Immediate</td>
+        <td>13/07/2026</td>
+        
+        <td>Portsmouth UA</td>
+        <td>TREAT/DISPOSE NON-HAZARD WASTE</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316142307"
+		   href="notice_details.asp?SF=CN&amp;SV=316142307"> 316142307</a></td>
+        <td>E.P. Engineering Company (Dundee) Limited</td>
+        <td>Improvement Notice</td>
+        <td>10/04/2026</td>
+        
+        <td>Dundee UA</td>
+        <td>MACHINING</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316137324"
+		   href="notice_details.asp?SF=CN&amp;SV=316137324"> 316137324</a></td>
+        <td>Ali Hussein</td>
+        <td>Improvement Notice</td>
+        <td>23/07/2026</td>
+        
+        <td>South Oxfordshire</td>
+        <td>MVR</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316137323"
+		   href="notice_details.asp?SF=CN&amp;SV=316137323"> 316137323</a></td>
+        <td>Ali Hussein</td>
+        <td>Improvement Notice</td>
+        <td>23/07/2026</td>
+        
+        <td>South Oxfordshire</td>
+        <td>MVR</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316137321"
+		   href="notice_details.asp?SF=CN&amp;SV=316137321"> 316137321</a></td>
+        <td>Ali Hussein</td>
+        <td>Improvement Notice</td>
+        <td>23/07/2026</td>
+        
+        <td>South Oxfordshire</td>
+        <td>MVR</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316137320"
+		   href="notice_details.asp?SF=CN&amp;SV=316137320"> 316137320</a></td>
+        <td>Ali Hussein</td>
+        <td>Improvement Notice</td>
+        <td>23/07/2026</td>
+        
+        <td>South Oxfordshire</td>
+        <td>MVR</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316137297"
+		   href="notice_details.asp?SF=CN&amp;SV=316137297"> 316137297</a></td>
+        <td>Ali Hussein</td>
+        <td>Improvement Notice</td>
+        <td>23/07/2026</td>
+        
+        <td>South Oxfordshire</td>
+        <td>MVR</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316134711"
+		   href="notice_details.asp?SF=CN&amp;SV=316134711"> 316134711</a></td>
+        <td>MOD Army</td>
+        <td>Improvement Notice</td>
+        <td>08/07/2026</td>
+        
+        <td>Northumberland UA</td>
+        <td>DEFENCE ACTIVITIES</td>
+      </tr>
+      
+      <tr>
+        <td><a title="Link to Notice Number 316121803"
+		   href="notice_details.asp?SF=CN&amp;SV=316121803"> 316121803</a></td>
+        <td>Chase Accident Repairs Limited</td>
+        <td>Improvement Notice</td>
+        <td>08/07/2026</td>
+        
+        <td>Cannock Chase</td>
+        <td>MVR</td>
+      </tr>
+      
+      <tr>
+        <th colspan="8">Page: 1 <a href="/notices/notices/notice_list.asp?PN=2&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 2">2</a> <a href="/notices/notices/notice_list.asp?PN=3&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 3">3</a> <a href="/notices/notices/notice_list.asp?PN=4&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 4">4</a> <a href="/notices/notices/notice_list.asp?PN=5&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 5">5</a> <a href="/notices/notices/notice_list.asp?PN=6&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 6">6</a> <a href="/notices/notices/notice_list.asp?PN=7&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 7">7</a> <a href="/notices/notices/notice_list.asp?PN=8&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 8">8</a> <a href="/notices/notices/notice_list.asp?PN=9&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 9">9</a> <a href="/notices/notices/notice_list.asp?PN=10&amp;ST=N&amp;CO=&amp;SN=F&amp;SF=NIS%2C+%7C&amp;EO=%3C&amp;SV=31%2F12%2F2100%2C+%7C&amp;SO=DNN" title="Show Page 10">10</a> </th>
+      </tr>
+    </table>
+    
+    <!-- InstanceEndEditable -->
+	  
+  
+	  
+  
+	  
+  
+	  
+	  
+ <!-- Beta flexible content page -->
+
+	  
+  
+	  
+	  
+  <!-- Beta two column -->
+	  
+   
+   
+
+	  
+  <!-- Beta two column (top task) -->
+	  
+  
+	  
+   
+
+	  
+
+
+	  
+	  
+
+	
+	
+	
+</main>
+
+</div>
+	  
+	
+
+	
+<div id="feedback">
+ <div class="feedback-container">
+	<p class="feedback-message"><strong>Is this page useful?</strong></p>
+	 
+	<div class="feedback-links">
+		<a id="userYes" href="#userYes">Yes</a>
+		<a id="userNo" href="#userNo">No</a>
+	</div>
+ </div>
+</div>
+	
+
+
+<footer id="footerContainer">
+  <div id="footer">
+    <h2 class="hide">Footer links</h2>
+	<div class="footer-links-container">
+    <ul>
+      <li class="first"><a href="https://www.hse.gov.uk/search/search-results.htm">Search</a></li>
+      <li><a href="https://www.hse.gov.uk/a-z/index.htm">A-Z</a></li>
+      <li><a href="https://www.hse.gov.uk/acronym/index.htm">Acronyms</a></li>
+      <li><a href="https://www.hse.gov.uk/about/site_map/index.htm">Site map</a></li>
+      <li><a href="https://www.hse.gov.uk/copyright.htm">Copyright</a></li>
+      <li><a href="https://www.hse.gov.uk/privacy.htm">Privacy</a></li>
+      <li><a href="https://www.hse.gov.uk/accessibility.htm">Accessibility</a></li>
+    </ul>
+	</div>
+  </div>
+  <div id="baseStrip">
+    <div id="baseStripInner">
+      <p>HSE aims to reduce work-related death, injury and ill health.</p>
+      <ul class="ddmswitch separateLabel fauxDropdown" title="Information in:" id="languagesDropdown">
+        <li><a href="https://www.hse.gov.uk/languages/welsh.htm"><span xml:lang="cy">Cymraeg</span> / Welsh</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/albanian.htm"><span xml:lang="sq">Shqip</span> / Albanian</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/arabic.htm"><span id="lArabic" class="nonLatin"></span> / Arabic</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/bengali.htm"><span id="lBengali" class="nonLatin"></span> / Bengali</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/chinese.htm"><span id="lChinese" class="nonLatin"></span> / Chinese</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/czech.htm"><span xml:lang="cs">&#268;e&#353;tina</span> / Czech</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/gujarati.htm"><span id="lGujarati" class="nonLatin"></span> / Gujarati</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/hindi.htm"><span id="lHindi" class="nonLatin"></span> / Hindi</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/kurdish.htm"><span id="lKurdish" class="nonLatin"></span> / Kurdish</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/latvian.htm"><span xml:lang="lv">Latvie&scaron;u</span> / Latvian</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/lithuanian.htm"><span xml:lang="lt">Lietuviskai</span> / Lithuanian</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/polish.htm"><span xml:lang="pl">Polski</span> / Polish</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/portuguese.htm"><span xml:lang="pt">Portugu&ecirc;s</span> / Portuguese</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/punjabi.htm"><span id="lPunjabi" class="nonLatin"></span> / Punjabi</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/romanian.htm"><span xml:lang="ro">Rom&acirc;n&acirc;</span> / Romanian</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/russian.htm"><span xml:lang="ru">&#1056;&#1091;&#1089;&#1089;&#1082;&#1080;&#1081;</span> / Russian</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/slovak.htm"><span xml:lang="sk">Slovensky</span> / Slovak</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/turkish.htm"><span xml:lang="tr">T&#252;r&#231;ke</span> / Turkish</a></li>
+        <li><a href="https://www.hse.gov.uk/languages/urdu.htm"><span id="lUrdu" class="nonLatin"></span> / Urdu</a></li>
+      </ul>
+    </div>
+	</div>
+</footer>
+	  
+<div id="lastUpdated"><!-- InstanceBeginEditable name="updated" -->Updated:
+<!-- #BeginDate format:IS1 -->2020-02-25<!-- #EndDate -->->
+  <!-- InstanceEndEditable --></div>
+<script type="text/javascript" src="https://www.google.co.uk/jsapi"></script>
+<script type="text/javascript" src="../assets/v4-js/jquery.min.js"></script>
+<script type="text/javascript" src="../assets/v5-js/v5-hse-primary.min.js"></script>
+<script type="text/javascript" src="../assets/v4-js/core.min.js"></script>
+<script type="text/javascript" src="../assets/v5-js/v5-footer.min.js"></script>
+	  
+<!-- Replaces default Google custom search placeholder text -->
+<script>
+window.onload = function(){
+document.getElementById('gsc-i-id1').placeholder = 'Search hse.gov.uk';
+};
+</script>
+	
+<div id="gutter"><!-- InstanceBeginEditable name="gutter" --> <!-- InstanceEndEditable --></div>
+
+
+
+
+
+
+
+ 
+<!-- InstanceParam name="bodyClass" type="text" value="abouthse" --> 
+<!-- InstanceParam name="layout" type="text" value="betacontentpage" --> 
+<!-- InstanceParam name="platform" type="text" value="v5" --> 
+<!-- InstanceParam name="rdfa" type="boolean" value="false" -->
+<!-- InstanceParam name="welsh" type="boolean" value="false" --> 
+<!-- InstanceParam name="homepage" type="boolean" value="false" --> 
+<!-- InstanceParam name="weblite" type="boolean" value="false" -->
+<!-- InstanceParam name="feedback" type="boolean" value="true" -->
+<!-- InstanceParam name="contentType" type="text" value="default" -->
+<!-- InstanceParam name="notificationBar" type="boolean" value="true" --> 
+
+</body>
+<!-- InstanceEnd --></html>

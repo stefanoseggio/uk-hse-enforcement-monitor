@@ -1,12 +1,57 @@
 {
     "$schema": "https://apify.com/schemas/v1/output.ide.json",
     "actorOutputSchemaVersion": 1,
-    "title": "Output schema",
+    "title": "UK HSE Enforcement Monitor output",
     "properties": {
         "results": {
             "type": "string",
-            "title": "Results",
+            "title": "All records (JSON)",
             "template": "{{links.apiDefaultDatasetUrl}}/items"
+        },
+        "resultsNewestFirst": {
+            "type": "string",
+            "title": "All records, newest first (JSON)",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?desc=true"
+        },
+        "csv": {
+            "type": "string",
+            "title": "CSV export",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?format=csv&desc=true"
+        },
+        "excel": {
+            "type": "string",
+            "title": "Excel export",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?format=xlsx&desc=true"
+        },
+        "overview": {
+            "type": "string",
+            "title": "Overview view",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=overview&desc=true"
+        },
+        "convictions": {
+            "type": "string",
+            "title": "Convictions & fines view",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=convictions&desc=true"
+        },
+        "notices": {
+            "type": "string",
+            "title": "Enforcement notices view",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=notices&desc=true"
+        },
+        "compliance": {
+            "type": "string",
+            "title": "Compliance tracker view",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=compliance&desc=true"
+        },
+        "parties": {
+            "type": "string",
+            "title": "Defendants & recipients view",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=parties&desc=true"
+        },
+        "runSummary": {
+            "type": "string",
+            "title": "Run summary (counts, total matching on HSE, re-checks, delta store)",
+            "template": "{{links.apiDefaultKeyValueStoreUrl}}/records/OUTPUT"
         }
     }
 }

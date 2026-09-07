@@ -1,8 +1,8 @@
 {
     "name": "uk-hse-enforcement-monitor",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "type": "module",
-    "description": "UK HSE Enforcement Monitor: extracts the Health and Safety Executive's public register of Convictions and Enforcement Notices (defendant/recipient, fine, breach, legislation, location), sorted newest-first for recurring compliance monitoring.",
+    "description": "UK HSE Enforcement Monitor: scrape and monitor the Health and Safety Executive public registers of convictions (prosecutions, fines, breaches, courts) and enforcement notices (Improvement and Prohibition notices) on resources.hse.gov.uk - server-side filters, delta mode with NEW/UPDATED events, ISO dates, numeric GBP, defendant status and repeat-offender signals.",
     "engines": {
         "node": ">=20.0.0"
     },
@@ -14,6 +14,7 @@
         "@apify/eslint-config": "^2.0.0",
         "@apify/tsconfig": "^0.2.0",
         "@types/node": "^24.0.0",
+        "cross-env": "^7.0.3",
         "eslint": "^9.29.0",
         "eslint-config-prettier": "^10.1.5",
         "globals": "^17.0.0",
@@ -32,8 +33,33 @@
         "lint:fix": "eslint --fix",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "test": "vitest run"
+        "test": "vitest run",
+        "test:live": "cross-env LIVE=1 vitest run"
     },
     "author": "Stefano",
-    "license": "ISC"
+    "license": "Apache-2.0",
+    "keywords": [
+        "apify",
+        "actor",
+        "hse",
+        "health and safety executive",
+        "uk health and safety prosecutions",
+        "hse enforcement notices",
+        "improvement notice",
+        "prohibition notice",
+        "hse convictions register",
+        "contractor vetting",
+        "kyb",
+        "adverse media",
+        "osha equivalent uk",
+        "scraper",
+        "monitor",
+        "delta",
+        "b2b data"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/stefanoseggio/uk-hse-enforcement-monitor.git"
+    },
+    "homepage": "https://apify.com/stefano_seggio/uk-hse-enforcement-monitor"
 }

@@ -2,20 +2,20 @@
     "$schema": "https://apify.com/schemas/v1/actor.ide.json",
     "actorSpecification": 1,
     "name": "uk-hse-enforcement-monitor",
-    "title": "UK HSE Enforcement Monitor",
-    "description": "Extracts the UK Health and Safety Executive's public register of Convictions and Enforcement Notices - defendant/recipient, fine, breach and legislation section, court, and location - sorted newest-first for recurring compliance monitoring.",
-    "version": "1.0",
+    "title": "UK HSE Enforcement Monitor - Prosecutions & Notices Scraper",
+    "description": "Scrape and monitor the UK Health and Safety Executive registers of convictions (prosecutions, fines, breaches, courts) and enforcement notices (Improvement, Prohibition). Filter by company name, region, industry, fine, notice type, dates. Delta mode with new and updated events. Pay per record.",
+    "version": "2.0",
     "buildTag": "latest",
     "minMemoryMbytes": 256,
-    "maxMemoryMbytes": 512,
+    "maxMemoryMbytes": 1024,
     "meta": {
-        "templateId": "ts-crawlee-cheerio",
-        "generatedBy": "Claude Code with Claude Sonnet 5"
+        "templateId": "ts-crawlee-cheerio"
     },
     "inputSchema": "./input_schema.json",
     "outputSchema": "./output_schema.json",
     "storages": {
         "dataset": "./dataset_schema.json"
     },
+    "changelog": "../CHANGELOG.md",
     "dockerfile": "../Dockerfile"
 }

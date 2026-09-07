@@ -1,122 +1,417 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "actorSpecification": 1,
-    "title": "Dataset Schema",
+    "title": "UK HSE enforcement records",
+    "description": "One item per conviction (recordType 'conviction') or enforcement notice (recordType 'notice') from the HSE public registers. Raw site strings are kept verbatim next to normalised siblings (ISO dates, numeric GBP, postcode, SIC code, booleans) so the data drops straight into a warehouse, CRM or spreadsheet. Records are appended oldest-first within a run; read newest-first with ?desc=true.",
     "fields": {
         "type": "object",
+        "additionalProperties": true,
         "properties": {
-            "recordType": { "title": "Record Type", "type": "string", "description": "conviction or notice" },
-            "caseNumber": { "title": "Case Number", "type": ["string", "null"], "description": "Convictions only" },
-            "noticeNumber": { "title": "Notice Number", "type": ["string", "null"], "description": "Notices only" },
-            "defendantName": {
-                "title": "Defendant Name",
-                "type": ["string", "null"],
-                "description": "Convictions only"
-            },
-            "defendantId": { "title": "Defendant ID", "type": ["string", "null"] },
-            "recipientName": { "title": "Recipient Name", "type": ["string", "null"], "description": "Notices only" },
-            "recipientId": { "title": "Recipient ID", "type": ["string", "null"] },
-            "noticeType": {
-                "title": "Notice Type",
-                "type": ["string", "null"],
-                "description": "Improvement / Prohibition - notices only"
-            },
-            "description": { "title": "Description", "type": ["string", "null"] },
-            "offenceDate": { "title": "Offence Date", "type": ["string", "null"], "description": "Convictions only" },
-            "servedDate": { "title": "Served Date", "type": ["string", "null"], "description": "Notices only" },
-            "complianceDate": { "title": "Compliance Date", "type": ["string", "null"], "description": "Notices only" },
-            "revisedComplianceDate": {
-                "title": "Revised Compliance Date",
-                "type": ["string", "null"],
-                "description": "Notices only"
-            },
-            "result": { "title": "Result", "type": ["string", "null"], "description": "Notices only" },
-            "totalFine": { "title": "Total Fine", "type": ["string", "null"], "description": "Convictions only" },
-            "totalCosts": {
-                "title": "Total Costs Awarded to HSE",
-                "type": ["string", "null"],
-                "description": "Convictions only"
-            },
-            "address": { "title": "Address", "type": ["string", "null"] },
-            "region": { "title": "Region", "type": ["string", "null"] },
-            "localAuthority": { "title": "Local Authority", "type": ["string", "null"] },
-            "industry": { "title": "Industry", "type": ["string", "null"] },
-            "mainActivity": { "title": "Main Activity", "type": ["string", "null"] },
-            "typeOfLocation": { "title": "Type of Location", "type": ["string", "null"] },
-            "hseGroup": { "title": "HSE Group", "type": ["string", "null"] },
-            "hseDirectorate": { "title": "HSE Directorate", "type": ["string", "null"] },
-            "hseArea": { "title": "HSE Area", "type": ["string", "null"] },
-            "hseDivision": { "title": "HSE Division", "type": ["string", "null"] },
-            "breaches": {
-                "title": "Breaches",
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "breachId": { "type": ["string", "null"] },
-                        "court": { "type": ["string", "null"] },
-                        "courtLevel": { "type": ["string", "null"] },
-                        "act": { "type": ["string", "null"] },
-                        "regulation": { "type": ["string", "null"] },
-                        "actOrRegulation": { "type": ["string", "null"] },
-                        "dateOfHearing": { "type": ["string", "null"] },
-                        "result": { "type": ["string", "null"] },
-                        "fine": { "type": ["string", "null"] }
-                    }
-                }
-            },
             "record_id": {
-                "title": "Record ID",
                 "type": "string",
-                "description": "caseNumber or noticeNumber - stable across runs"
+                "title": "Record ID",
+                "description": "caseNumber or noticeNumber - stable across runs."
             },
             "event_type": {
-                "title": "Event Type",
                 "type": "string",
-                "description": "SANCTION (convictions) or NEW_LISTING (notices)"
+                "title": "Event type",
+                "description": "SANCTION (conviction not delivered before), NEW_LISTING (notice not delivered before) or UPDATED (a previously delivered record whose case/notice page changed).",
+                "enum": ["SANCTION", "NEW_LISTING", "UPDATED"]
             },
             "scraped_at": {
-                "title": "Scraped At",
                 "type": "string",
-                "description": "ISO-8601 timestamp of this extraction"
+                "title": "Scraped at",
+                "description": "ISO-8601 UTC timestamp of this extraction."
             },
             "is_new": {
-                "title": "Is New",
                 "type": "boolean",
-                "description": "true if not seen in a prior run (delta mode)"
+                "title": "Is new",
+                "description": "true when this record was never delivered by a previous run of this delta state."
             },
-            "source_url": { "title": "Source URL", "type": "string" }
+            "source_url": { "type": "string", "title": "Source URL", "description": "The official HSE register page." },
+            "data_source": {
+                "type": "string",
+                "title": "Data source",
+                "description": "Open Government Licence v3.0 attribution string."
+            },
+            "recordType": { "type": "string", "title": "Record type", "enum": ["conviction", "notice"] },
+
+            "caseNumber": { "type": ["string", "null"], "title": "Case number", "description": "Convictions only." },
+            "noticeNumber": { "type": ["string", "null"], "title": "Notice number", "description": "Notices only." },
+            "defendantName": { "type": ["string", "null"], "title": "Defendant", "description": "Convictions only." },
+            "defendantId": { "type": ["string", "null"], "title": "Defendant ID (HSE reference)" },
+            "recipientName": { "type": ["string", "null"], "title": "Recipient", "description": "Notices only." },
+            "recipientId": { "type": ["string", "null"], "title": "Recipient ID (HSE reference)" },
+            "description": { "type": ["string", "null"], "title": "Description" },
+
+            "offenceDate": { "type": ["string", "null"], "title": "Offence date (raw)", "example": "27/07/2021" },
+            "offenceDateIso": { "type": ["string", "null"], "title": "Offence date", "description": "YYYY-MM-DD." },
+            "hearingDate": { "type": ["string", "null"], "title": "Latest hearing date (raw)" },
+            "hearingDateIso": {
+                "type": ["string", "null"],
+                "title": "Latest hearing date",
+                "description": "Newest Date of Hearing across the case's breaches - the closest thing to a publication date."
+            },
+            "totalFine": { "type": ["string", "null"], "title": "Total fine (raw)", "example": "£400,000.00" },
+            "totalFineGbp": { "type": ["number", "null"], "title": "Total fine (GBP)" },
+            "totalCosts": { "type": ["string", "null"], "title": "Costs awarded to HSE (raw)" },
+            "totalCostsGbp": { "type": ["number", "null"], "title": "Costs awarded to HSE (GBP)" },
+            "totalPenaltyGbp": { "type": ["number", "null"], "title": "Fine + costs (GBP)" },
+            "resultingFromFatality": {
+                "type": ["boolean", "null"],
+                "title": "Resulting from a fatality",
+                "description": "true when the case page states it resulted from the investigation of a fatality."
+            },
+            "hasCustodialSentence": {
+                "type": ["boolean", "null"],
+                "title": "Custodial sentence",
+                "description": "true when any breach result is a prison sentence (including suspended)."
+            },
+            "breachCount": { "type": ["integer", "null"], "title": "Number of breaches" },
+            "legislationBreached": {
+                "type": ["array", "null"],
+                "title": "Legislation breached",
+                "items": { "type": "string" }
+            },
+            "courtLevel": { "type": ["string", "null"], "title": "Court level", "example": "Magistrates Court" },
+            "breaches": {
+                "type": "array",
+                "title": "Breaches",
+                "description": "Convictions: breachId, court, courtLevel, act, regulation, dateOfHearing(Iso), result, resultListing, resultCategory, isCustodial, fine, fineGbp, actName/actSection/actSubSection, regulationName/regulationNumber/regulationParagraph, legislation/provision/paragraph, source_url. Notices: breachId, actOrRegulation, legislation, provision, paragraph.",
+                "items": { "type": "object" }
+            },
+
+            "noticeType": {
+                "type": ["string", "null"],
+                "title": "Notice type",
+                "example": "Immediate Prohibition Notice"
+            },
+            "noticeTypeListing": { "type": ["string", "null"], "title": "Notice type (listing wording)" },
+            "noticeCategory": {
+                "type": ["string", "null"],
+                "title": "Notice category",
+                "enum": ["Improvement", "Prohibition", null]
+            },
+            "isProhibition": { "type": ["boolean", "null"], "title": "Is prohibition notice" },
+            "isImprovement": { "type": ["boolean", "null"], "title": "Is improvement notice" },
+            "isImmediate": { "type": ["boolean", "null"], "title": "Is immediate prohibition" },
+            "isDeferred": { "type": ["boolean", "null"], "title": "Is deferred prohibition" },
+            "isCrown": { "type": ["boolean", "null"], "title": "Crown notice" },
+            "isComah": { "type": ["boolean", "null"], "title": "COMAH notice" },
+            "isFepa": { "type": ["boolean", "null"], "title": "FEPA notice" },
+            "servedDate": { "type": ["string", "null"], "title": "Served on (raw)" },
+            "servedDateIso": { "type": ["string", "null"], "title": "Served on" },
+            "complianceDate": { "type": ["string", "null"], "title": "Compliance date (raw)" },
+            "complianceDateIso": { "type": ["string", "null"], "title": "Compliance date" },
+            "revisedComplianceDate": { "type": ["string", "null"], "title": "Revised compliance date (raw)" },
+            "revisedComplianceDateIso": { "type": ["string", "null"], "title": "Revised compliance date" },
+            "effectiveComplianceDateIso": {
+                "type": ["string", "null"],
+                "title": "Effective compliance date",
+                "description": "Revised date when one exists, else the original."
+            },
+            "daysToComply": { "type": ["integer", "null"], "title": "Days given to comply" },
+            "daysUntilCompliance": {
+                "type": ["integer", "null"],
+                "title": "Days until compliance",
+                "description": "Negative once the effective compliance date has passed."
+            },
+            "hasRevisedComplianceDate": { "type": ["boolean", "null"], "title": "Has revised compliance date" },
+            "result": { "type": ["string", "null"], "title": "Result", "example": "Ongoing" },
+            "isOngoing": { "type": ["boolean", "null"], "title": "Is ongoing" },
+            "isCompliedWith": { "type": ["boolean", "null"], "title": "Complied with" },
+            "isOverdue": {
+                "type": ["boolean", "null"],
+                "title": "Is overdue",
+                "description": "Ongoing and past its effective compliance date."
+            },
+            "descriptionItemIds": {
+                "type": ["array", "null"],
+                "title": "Notice numbers in the description",
+                "description": "Per-item notice numbers embedded in multi-item descriptions.",
+                "items": { "type": "string" }
+            },
+
+            "address": { "type": ["string", "null"], "title": "Offence address" },
+            "postcode": { "type": ["string", "null"], "title": "Postcode" },
+            "country": { "type": ["string", "null"], "title": "Country" },
+            "region": { "type": ["string", "null"], "title": "UK region" },
+            "localAuthority": { "type": ["string", "null"], "title": "Local authority" },
+            "industry": { "type": ["string", "null"], "title": "Industry" },
+            "mainActivity": {
+                "type": ["string", "null"],
+                "title": "Main activity (raw)",
+                "example": "43910 - ROOFING ACTIVITIES"
+            },
+            "sicCode": { "type": ["string", "null"], "title": "SIC code" },
+            "sicDescription": { "type": ["string", "null"], "title": "SIC description" },
+            "typeOfLocation": { "type": ["string", "null"], "title": "Type of location" },
+            "hseGroup": { "type": ["string", "null"], "title": "HSE group" },
+            "hseDirectorate": { "type": ["string", "null"], "title": "HSE directorate" },
+            "hseArea": {
+                "type": ["string", "null"],
+                "title": "HSE area",
+                "description": "Always empty on the live register; kept for compatibility."
+            },
+            "hseDivision": { "type": ["string", "null"], "title": "HSE division" },
+
+            "partyStatus": { "type": ["string", "null"], "title": "Party status", "example": "Private Company" },
+            "partyEntityType": {
+                "type": ["string", "null"],
+                "title": "Party entity type",
+                "enum": ["company", "individual", "partnership", "public_body", "other", null]
+            },
+            "partyAddress": { "type": ["string", "null"], "title": "Party registered address" },
+            "partyPostcode": { "type": ["string", "null"], "title": "Party postcode" },
+            "partyHseReference": { "type": ["string", "null"], "title": "Party HSE reference" },
+            "partyUrl": { "type": ["string", "null"], "title": "Party page" },
+            "partyConvictionCount": {
+                "type": ["integer", "null"],
+                "title": "Party convictions (all time on register)"
+            },
+            "partyNoticeCount": { "type": ["integer", "null"], "title": "Party notices (all time on register)" },
+            "partyOtherCaseNumbers": {
+                "type": ["array", "null"],
+                "title": "Party's other case numbers",
+                "items": { "type": "string" }
+            },
+            "partyOtherNoticeNumbers": {
+                "type": ["array", "null"],
+                "title": "Party's other notice numbers",
+                "items": { "type": "string" }
+            },
+            "isRepeatOffender": {
+                "type": ["boolean", "null"],
+                "title": "Repeat offender",
+                "description": "true when the party has more than one conviction or notice on the registers."
+            },
+
+            "detailFetched": { "type": "boolean", "title": "Detail fetched" },
+            "detailError": {
+                "type": ["string", "null"],
+                "title": "Detail error",
+                "description": "NOT_FOUND when the page was withdrawn between listing and detail."
+            },
+            "breachDetailFetched": { "type": "boolean", "title": "Breach detail fetched" },
+            "partyDetailFetched": { "type": "boolean", "title": "Party detail fetched" },
+            "partyDetailError": { "type": ["string", "null"], "title": "Party detail error" },
+            "contentHash": {
+                "type": ["string", "null"],
+                "title": "Content hash",
+                "description": "The delta engine's change key for this record."
+            },
+            "firstSeenAt": {
+                "type": ["string", "null"],
+                "title": "First delivered on",
+                "description": "YYYY-MM-DD, from the delta memory."
+            }
         }
     },
     "views": {
         "overview": {
             "title": "Overview",
+            "description": "Both registers side by side - who, what, when, where, how much.",
             "transformation": {
                 "fields": [
+                    "event_type",
                     "recordType",
-                    "caseNumber",
-                    "noticeNumber",
+                    "record_id",
                     "defendantName",
                     "recipientName",
-                    "offenceDate",
-                    "servedDate",
-                    "totalFine",
-                    "localAuthority"
+                    "noticeType",
+                    "offenceDateIso",
+                    "servedDateIso",
+                    "totalFineGbp",
+                    "result",
+                    "localAuthority",
+                    "region",
+                    "industry",
+                    "partyStatus",
+                    "source_url"
                 ]
             },
             "display": {
                 "component": "table",
-                "columns": [
-                    { "label": "Type", "format": "text", "field": "recordType" },
-                    { "label": "Case #", "format": "text", "field": "caseNumber" },
-                    { "label": "Notice #", "format": "text", "field": "noticeNumber" },
-                    { "label": "Defendant", "format": "text", "field": "defendantName" },
-                    { "label": "Recipient", "format": "text", "field": "recipientName" },
-                    { "label": "Offence Date", "format": "text", "field": "offenceDate" },
-                    { "label": "Served Date", "format": "text", "field": "servedDate" },
-                    { "label": "Fine", "format": "text", "field": "totalFine" },
-                    { "label": "Local Authority", "format": "text", "field": "localAuthority" }
+                "properties": {
+                    "event_type": { "label": "Event", "format": "text" },
+                    "recordType": { "label": "Register", "format": "text" },
+                    "record_id": { "label": "Number", "format": "text" },
+                    "defendantName": { "label": "Defendant", "format": "text" },
+                    "recipientName": { "label": "Recipient", "format": "text" },
+                    "noticeType": { "label": "Notice type", "format": "text" },
+                    "offenceDateIso": { "label": "Offence date", "format": "date" },
+                    "servedDateIso": { "label": "Served", "format": "date" },
+                    "totalFineGbp": { "label": "Fine (GBP)", "format": "number" },
+                    "result": { "label": "Result", "format": "text" },
+                    "localAuthority": { "label": "Local authority", "format": "text" },
+                    "region": { "label": "Region", "format": "text" },
+                    "industry": { "label": "Industry", "format": "text" },
+                    "partyStatus": { "label": "Status", "format": "text" },
+                    "source_url": { "label": "Record", "format": "link" }
+                }
+            }
+        },
+        "convictions": {
+            "title": "Convictions & fines",
+            "description": "Prosecutions: defendant, offence and hearing dates, fine, costs, fatality and custodial flags, legislation.",
+            "transformation": {
+                "filter": { "recordType": "conviction" },
+                "fields": [
+                    "caseNumber",
+                    "defendantName",
+                    "partyStatus",
+                    "offenceDateIso",
+                    "hearingDateIso",
+                    "totalFineGbp",
+                    "totalCostsGbp",
+                    "resultingFromFatality",
+                    "hasCustodialSentence",
+                    "breachCount",
+                    "legislationBreached",
+                    "courtLevel",
+                    "localAuthority",
+                    "sicDescription",
+                    "source_url"
                 ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "caseNumber": { "label": "Case", "format": "text" },
+                    "defendantName": { "label": "Defendant", "format": "text" },
+                    "partyStatus": { "label": "Status", "format": "text" },
+                    "offenceDateIso": { "label": "Offence", "format": "date" },
+                    "hearingDateIso": { "label": "Hearing", "format": "date" },
+                    "totalFineGbp": { "label": "Fine (GBP)", "format": "number" },
+                    "totalCostsGbp": { "label": "Costs (GBP)", "format": "number" },
+                    "resultingFromFatality": { "label": "Fatality", "format": "boolean" },
+                    "hasCustodialSentence": { "label": "Custodial", "format": "boolean" },
+                    "breachCount": { "label": "Breaches", "format": "number" },
+                    "legislationBreached": { "label": "Legislation", "format": "array" },
+                    "courtLevel": { "label": "Court", "format": "text" },
+                    "localAuthority": { "label": "Local authority", "format": "text" },
+                    "sicDescription": { "label": "Activity", "format": "text" },
+                    "source_url": { "label": "Record", "format": "link" }
+                }
+            }
+        },
+        "notices": {
+            "title": "Enforcement notices",
+            "description": "Improvement and Prohibition notices: recipient, type, served and compliance dates, result, legislation.",
+            "transformation": {
+                "filter": { "recordType": "notice" },
+                "fields": [
+                    "noticeNumber",
+                    "recipientName",
+                    "partyStatus",
+                    "noticeType",
+                    "servedDateIso",
+                    "complianceDateIso",
+                    "result",
+                    "isImmediate",
+                    "legislationBreached",
+                    "localAuthority",
+                    "sicDescription",
+                    "region",
+                    "source_url"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "noticeNumber": { "label": "Notice", "format": "text" },
+                    "recipientName": { "label": "Recipient", "format": "text" },
+                    "partyStatus": { "label": "Status", "format": "text" },
+                    "noticeType": { "label": "Type", "format": "text" },
+                    "servedDateIso": { "label": "Served", "format": "date" },
+                    "complianceDateIso": { "label": "Comply by", "format": "date" },
+                    "result": { "label": "Result", "format": "text" },
+                    "isImmediate": { "label": "Immediate", "format": "boolean" },
+                    "legislationBreached": { "label": "Legislation", "format": "array" },
+                    "localAuthority": { "label": "Local authority", "format": "text" },
+                    "sicDescription": { "label": "Activity", "format": "text" },
+                    "region": { "label": "Region", "format": "text" },
+                    "source_url": { "label": "Record", "format": "link" }
+                }
+            }
+        },
+        "compliance": {
+            "title": "Compliance tracker",
+            "description": "Open notices and their deadlines - what is ongoing, overdue, revised or complied with.",
+            "transformation": {
+                "filter": { "recordType": "notice" },
+                "fields": [
+                    "event_type",
+                    "noticeNumber",
+                    "recipientName",
+                    "noticeCategory",
+                    "servedDateIso",
+                    "effectiveComplianceDateIso",
+                    "daysUntilCompliance",
+                    "isOngoing",
+                    "isOverdue",
+                    "isCompliedWith",
+                    "hasRevisedComplianceDate",
+                    "firstSeenAt",
+                    "source_url"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "event_type": { "label": "Event", "format": "text" },
+                    "noticeNumber": { "label": "Notice", "format": "text" },
+                    "recipientName": { "label": "Recipient", "format": "text" },
+                    "noticeCategory": { "label": "Category", "format": "text" },
+                    "servedDateIso": { "label": "Served", "format": "date" },
+                    "effectiveComplianceDateIso": { "label": "Comply by", "format": "date" },
+                    "daysUntilCompliance": { "label": "Days left", "format": "number" },
+                    "isOngoing": { "label": "Ongoing", "format": "boolean" },
+                    "isOverdue": { "label": "Overdue", "format": "boolean" },
+                    "isCompliedWith": { "label": "Complied", "format": "boolean" },
+                    "hasRevisedComplianceDate": { "label": "Revised", "format": "boolean" },
+                    "firstSeenAt": { "label": "First seen", "format": "date" },
+                    "source_url": { "label": "Record", "format": "link" }
+                }
+            }
+        },
+        "parties": {
+            "title": "Defendants & recipients",
+            "description": "Who was sanctioned: legal status, registered address, HSE reference and repeat-offender counts across both registers.",
+            "transformation": {
+                "fields": [
+                    "recordType",
+                    "record_id",
+                    "defendantName",
+                    "recipientName",
+                    "partyStatus",
+                    "partyEntityType",
+                    "partyAddress",
+                    "partyPostcode",
+                    "partyHseReference",
+                    "partyConvictionCount",
+                    "partyNoticeCount",
+                    "isRepeatOffender",
+                    "partyUrl"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "recordType": { "label": "Register", "format": "text" },
+                    "record_id": { "label": "Number", "format": "text" },
+                    "defendantName": { "label": "Defendant", "format": "text" },
+                    "recipientName": { "label": "Recipient", "format": "text" },
+                    "partyStatus": { "label": "Status", "format": "text" },
+                    "partyEntityType": { "label": "Entity type", "format": "text" },
+                    "partyAddress": { "label": "Registered address", "format": "text" },
+                    "partyPostcode": { "label": "Postcode", "format": "text" },
+                    "partyHseReference": { "label": "HSE ref", "format": "text" },
+                    "partyConvictionCount": { "label": "Convictions", "format": "number" },
+                    "partyNoticeCount": { "label": "Notices", "format": "number" },
+                    "isRepeatOffender": { "label": "Repeat", "format": "boolean" },
+                    "partyUrl": { "label": "Party page", "format": "link" }
+                }
             }
         }
     }

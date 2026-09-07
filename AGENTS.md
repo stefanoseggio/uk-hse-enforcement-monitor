@@ -1,208 +1,264 @@
 # AGENTS.md - UK HSE Enforcement Monitor
 
-Technical notes for whoever (human or AI) touches this actor next.
+Technical notes for whoever (human or AI) touches this actor next. Everything
+below was verified live against resources.hse.gov.uk on 2026-09-07 unless
+stated (v1 notes of 2026-09-06 are marked).
 
 ## What this actor does
 
-Extracts the UK Health and Safety Executive's public register of
-**Convictions** (prosecutions/fines) and **Enforcement Notices**
-(Improvement/Prohibition), each with full defendant/recipient, fine,
-breach/legislation and location detail, sorted newest-first.
+Extracts the UK Health and Safety Executive's two public enforcement
+registers - **Convictions** (successful prosecutions: defendant, offence,
+fine, costs, breaches with court / Act / hearing / result) and **Enforcement
+Notices** (Improvement / Prohibition notices: recipient, type, served and
+compliance dates, result, breaches) - with the registers' own search
+criteria applied server-side, the defendant / recipient profile and
+history, and a delta engine keyed on a **content hash** of each record's
+page (the registers have no timestamps).
 
-## The site is a classic-ASP multi-step wizard, but every step is a plain,
+## Site facts that shape the design
 
-## stateless GET with a fixed, discoverable query shape
+### No gate at all
 
-`resources.hse.gov.uk` presents its search as a multi-page wizard (pick
-Cases/Breaches -> pick a search field -> enter a value -> "Add" -> "Perform
-search"), but every step bottoms out in a plain `GET` with query params -
-verified live 2026-09-06 by walking the real wizard with curl end to end
-(home -> `Default.asp` step posts -> `search/advanced/default.asp` step
-posts -> the "Perform search" form's own `GET ../search.asp` -> the 302
-redirect target `case_list.asp?...`). **No session cookie is required at
-any point** - a bare, cookie-less request to the final listing URL returns
-the identical result set as one that walked the whole wizard first. This
-was directly verified (`curl` with no `-b`/`-c` at all, zero prior
-requests) - see `src/http.ts`.
+IIS 7.5 classic ASP. No WAF, no Cloudflare, no JS, no CAPTCHA, no required
+cookie (a request with no User-Agent still gets 200). `src/http.ts` sends a
+browser UA anyway. `resources.hse.gov.uk/robots.txt` is 404 (no rules);
+`www.hse.gov.uk/robots.txt` disallows `/prosecutions/case/case_details.asp?SF=CN&SV=4157835`
+(the legacy path of this register) - `src/codes.ts` skips that case. Pages
+answer in 0.3-2.5 s; 17 concurrent fetches were served without throttling
+(v1 audit). `maxConcurrency` is capped at 10, default 5.
 
-## The "no real filter, sorted newest-first" query is copied verbatim
+### The query grammar is a classic-ASP comma join
 
-## from a real link on the site, not invented
+Every wizard step ends in a plain GET on `case_list.asp` / `notice_list.asp`.
+One criterion: `ST=C|N&CO=&SN=F|P&SF=<code>,+|&EO=<op>&SV=<value>,+|&SO=<sort>&PN=<page>`.
+Several criteria (2 and 3 verified on both registers, AND and OR both work):
+`CO=,AND,AND&SN=F,+P,+F&SF=A,|,+B,|,+C,+|&EO=x,+y,+z&SV=a,|,+b,|,+c,+|` -
+`,|` after every value but the last, `,+|` after the last. `src/urls.ts`
+`buildQueryString()` produces exactly this; `src/parsers/listing.ts`
+validates every page because:
 
-The site's own "New cases" navigation link is:
+- a wrong join renders **"0 Matching results found" with HTTP 200**;
+- an unknown column renders the **SQL error page** ("Sorry ... some form
+  of error ... Invalid column name 'XYZ'") which ALSO contains "0 Matching
+  results found" - so the error text is checked first;
+- `NT IN` (notice type) must be the FIRST criterion of a join (reversed
+  order = SQL error);
+- values are interpolated into SQL: an apostrophe is a SQL error.
+  `sanitizeFreeText()` turns `'` `"` `` ` `` and `+` (decoded as a space)
+  into `_`, the single-character LIKE wildcard ("O_Brien" matches
+  "O'Brien", "A_E Drainage" matches "A+E Drainage"), and drops `;` `|` `\`.
+- `LIKE` is case-insensitive; `%` and `_` wildcards pass through.
+- date operators `>` / `<` are strict and `=` is an exact day, so
+  `dateFrom` is sent as `> (dateFrom - 1 day)` and `dateTo` as
+  `< (dateTo + 1 day)`.
 
-```
-case_list.asp?ST=C&CO=,+AND&SN=F&SF=ODS,+|&EO=<&SV=31/12/2100,+|&SO=DODS
-```
+Column codes (all verified with result counts; "-" = not on that register):
 
-i.e. "offence date < 31/12/2100" (effectively "all records") sorted by
-`SO=DODS` (Date descending). The notices equivalent (self-derived by
-walking the same wizard shape with `FI=7` "date notice was issued") is
-`SO=DNIS` with `SF=NIS, |` / the same `31/12/2100, |` sentinel. Both are
-hardcoded in `src/urls.ts`. Pagination is a simple `&PN=<n>` param on the
-same URL; the header text `Showing Page X of Y` gives the total page
-count directly - no need to guess when to stop (see
-`src/parsers/listing.ts`).
+| Filter                   | Convictions     | Notices             | Notes                                                                 |
+| ------------------------ | --------------- | ------------------- | --------------------------------------------------------------------- |
+| name contains            | `DN` LIKE       | `RN` LIKE           | 127 / 8,792 for "Limited" / "Ltd"                                     |
+| summary contains         | `CSUM` LIKE     | `NSUM` LIKE         | "asbestos": 3 / 1,978                                                 |
+| local authority contains | `LA` LIKE       | `NLAC` LIKE         | `NLA` exists but is something else (0 hits)                           |
+| main activity (SIC)      | `SICD` LIKE     | `SICD` LIKE         | matches code or text ("43910" / "ROOFING"); `SIC` is the same column  |
+| UK region                | `UKR` = (P)     | `UKR` = (P)         | 1-7, see `src/codes.ts`                                               |
+| country                  | `CTR` = (P)     | `CTR` = (P)         | 8-11                                                                  |
+| industry                 | `GS` = (P)      | `GS` = (P)          | 12-16                                                                 |
+| HSE division             | `HDV` = (P)     | `HDV` = (P)         | 17-27; `HDR` = directorate, `HGR`/`NHGR` = group, `HAR`/`NHAR` = area |
+| date                     | `ODS` (offence) | `NIS` (issued)      | DD/MM/YYYY                                                            |
+| party id                 | `DID` =         | `RID` =             | the HSE Reference; the same id is used on both registers              |
+| record number            | `CN` =          | `NN` =              |                                                                       |
+| defendant status         | `CTY` = (P)     | -                   | 1972-1981                                                             |
+| fatality                 | `FAT` = Yes/No  | -                   | 43 fatal cases                                                        |
+| total fine / costs       | `TF` / `TC` > < | -                   | numeric, no symbol                                                    |
+| notice type              | -               | `NT` IN `01;..;09;` | 08 = 7,627; 01;02;03 = 22,424; 04..09 = 7,650                         |
+| act                      | -               | `ACT` = (P)         | 43 codes; `ACTS`/`REGN`/`REGP` exist but are ignored by the listing   |
 
-**Why the literal `", |"` suffix on `SF`/`SV`?** Classic ASP's
-`Request.Form("X")` joins multiple form fields sharing the same name with
-`", "` when read as a scalar. The real wizard submits `SF`/`SV` twice per
-step (once for the real value, once as a `|` chain terminator for
-additional criteria), and the server's own rendered "Current Search
-Criteria" hidden fields show the _already-joined_ result: `SF="ODS, |"`.
-For the final GET this is sent as a single, ordinary query param with
-that literal joined value - verified this works identically to walking
-the full wizard.
+Not exposed (code unknown or unverified): custodial sentence (wizard field
+21 - none of 8 guessed codes existed), type of location, HSE directorate /
+group / area (codes found but of little value), regulation picklist (536
+entries). The wizard itself resolves `SF` from its session, so codes can
+only be found by guessing against the error page.
 
-## Endpoints (all verified live 2026-09-06, no auth, no proxy)
+### Ordering is NOT publication order - hence the walk design
 
-Convictions (`/convictions/...`):
+- Convictions default sort is Offence Date, which lags publication by
+  months to years: case 4883993 (Skanska/Costain/Strabag JV, offence
+  27/07/2021, hearing 16/06/2026, GBP 400,000) is on page 1 of `SO=DCN`
+  (case number desc) but on the last pages of `DODS`. The register is ~210
+  records (21 pages, 6 s), so **convictions are always walked in full**
+  (`fullWalk: true`) and delta mode never early-stops on them.
+- Notices default sort is Issue Date; `SO=DNN` (notice number desc) is
+  entry order: page 2 of `DNN` today holds notice 316119748 issued
+  16/09/2025, ~250 pages deep in `DNIS`. Notices early-stop after 2
+  consecutive fully-known pages. There is no timestamp to bound a
+  watermark, so the 2-page rule and a 20,000-page cap are the only stops.
+- Other sorts: convictions `ACN/DCN, ADN/DDN, AODS/DODS, ALA/DLA, ASIC/DSIC`;
+  notices `ANN/DNN, ARN/DRN, ANT/DNT, ANIS/DNIS, ANLA/DNLA, ASIC/DSIC`;
+  breach list `ABID/DBID, AHD/DHD, AACT, AREG, AHRE, AFN/DFN`. `sortBy` is
+  not an input: the delta engine needs entry order and the dataset can be
+  sorted downstream.
 
-- `case/case_list.asp` - listing, links to `case_details.asp?SF=CN&SV=<id>`.
-- `case/case_details.asp?SF=CN&SV=<caseNumber>` - full detail: defendant
-  (+ link to `defendant/defendant_details.asp?SF=DID&SV=<id>`),
-  description, offence date, total fine, total costs, location, HSE admin
-  fields, and one or more links to `breach/breach_details.asp?SF=BID&SV=<breachId>`.
-- `breach/breach_details.asp?SF=BID&SV=<breachId>` - court, Act/Section,
-  Regulation, hearing date, result, per-breach fine.
+### Page anatomy used for termination and block detection
 
-Notices (`/notices/...`):
+- Listing header: "N Matching results found : Showing Page X of Y, results
+  A to B" (notices insert "from 30226 total records"); column header row
+  "Case Number | Defendant's Name | Offence Date | Local Authority | Main
+  Activity" / "Notice Number | Recipient's Name | Notice Type | Issue Date |
+  Local Authority | Main Activity". 10 rows per page.
+- Past the end: HTTP 200, "Showing Page 22 of 21, results -3 to 210", zero
+  rows - a legitimate end (cheap). Zero results: "0 Matching results
+  found", no "Showing Page" line.
+- `parseListingPage().isListingPage` requires: no error text, the column
+  header of the requested register, and a "Matching results found" count.
+  The walker retries twice and then FAILS the run.
+- Detail pages: a `<th>` header "Details for Case No. N" / "Notice N served
+  against <a>Recipient</a> on DD/MM/YYYY" (`isDetailPage`). An unknown id
+  answers **HTTP 500** (not 404); `fetchOptional` treats a 500 that survives
+  one retry as "record missing" (null) so one withdrawn record degrades.
+- Fatal cases carry an extra single-cell row "This case did result from the
+  investigation of a fatality" (`parseFatalityFlag`).
+- A multi-breach case page does NOT link its breaches (its "Breaches
+  involved in this Case" link is the generic New Breaches list); a
+  single-breach page links `breach_details.asp?SF=BID&SV=<case><seq>`.
+  The per-case breach list `breach_list.asp?ST=B&SN=F&EO=%3D&SF=CN&SV=<case>`
+  is the one-request source of all breach ids plus hearing date, result
+  ("Guilty-Fine", "Guilty-Prison Suspended", "Guilty-No Sep Penalty"), fine
+  and "Act / reg / para". Breach ids are not always contiguous (4849124 has
+  002 and 003 only). Breach pages use a different result vocabulary
+  ("Fine", "Prison Suspended") and add court name / level, Act
+  "..., Section 2, Sub Section 1", Regulation "... (No 15) para 2".
+- Notices: Improvement Notices have Compliance Date / Revised Compliance
+  Date / Result ("Ongoing" -> "Complied with"); **prohibition notice pages
+  have no Result or Compliance rows at all**, so their `isOngoing` is null
+  and they are never re-checked. Notices breach list rows are "Act / reg /
+  para" inline (no per-breach page). Listing wording differs from the
+  detail ("Prohibition Notice Immediate" vs "Immediate Prohibition
+  Notice") - both are kept (`noticeTypeListing`, `noticeType`).
+- Party pages (`defendant_details.asp?SF=DID&SV=` / `recipient_details.asp?SV=`):
+  Defendant|Recipient, Address (`<br>`-joined), Status, HSE Reference, and
+  links to the party's cases and notices on BOTH registers with the same
+  id; the listing header count of those lists is the repeat-offender
+  signal (`partyConvictionCount`, `partyNoticeCount`).
+- Convictions have an Excel export (`case_list-excel.asp?<same query>`,
+  Content-Disposition `HSEprosecutions.xls`, an HTML table with the same 5
+  columns, whole result in one request - 211 rows). Not used (the paginated
+  walk shares code with notices and costs 6 s); notices have no export
+  (404).
+- `HSE Area` is always empty on live pages; kept as a nullable field.
+- Labels use `&nbsp;` (U+00A0) and addresses use `<br>`; see
+  `parsers/labelValueTable.ts` (v1 notes).
 
-- `notices/notice_list.asp` - listing, links to
-  `notice_details.asp?SF=CN&SV=<id>`.
-- `notices/notice_details.asp?SF=CN&SV=<noticeNumber>` - the `<th>` header
-  reads `Notice <id> served against <a>Recipient</a> on <date>` (recipient
-  name/id and served date are parsed from this header, not a normal
-  label/value row); plus notice type, description, compliance dates,
-  result, location, HSE admin fields.
-- `breach/breach_list.asp?ST=B&SN=F&EO=%3D&SF=NN&SV=<noticeNumber>` - one
-  row per breach with Act/Regulation **already inline** - unlike
-  convictions, notices have no separate per-breach detail page.
+### Amendments keep their original date -> content hashes
 
-## Two real parsing gotchas found and fixed before writing the final parser
+Notice 315474881 (served 24/11/2025) flipped Result "Ongoing" -> "Complied
+with" and gained a Revised Compliance Date 06/03/2026 with no other change;
+breaches are appended to a case under the same number. No page shows a
+published / last-updated stamp. So:
 
-1. **`&nbsp;`-padded labels.** Several `<strong>` labels in the source use
-   `&nbsp;` instead of a plain space (e.g.
-   `Total&nbsp;Costs&nbsp;Awarded&nbsp;to&nbsp;HSE`, `HSE&nbsp;Area ` with
-   a trailing one too). Cheerio's `.text()` turns `&nbsp;` into a literal
-   U+00A0 character, which looks identical to a space in a terminal/log
-   but does **not** equal `" "` in a JS string comparison - a naive
-   `fields['Total Costs Awarded to HSE']` lookup would silently miss.
-   Fixed by normalizing with `.replace(/\s+/g, ' ')`, which - contrary to
-   the common assumption that `\s` is ASCII-only - **does** match U+00A0
-   under the ECMAScript spec, so this one regex handles it.
-2. **`<BR>`-joined addresses.** The `Address` value cell uses literal
-   `<BR>` tags to separate lines (`Hale Road/Millhouse Metals<BR>...`),
-   not real newline text nodes. Cheerio's `.text()` simply drops `<br>`
-   tags with no replacement, which would silently concatenate every line
-   into one run-together string. Fixed in `parsers/labelValueTable.ts` by
-   cloning the cell and replacing `<br>` elements with `, ` text nodes
-   before extracting text. This does **not** affect the Notices
-   `Description` field, which uses genuine newline text nodes (no `<br>`)
-   for its multi-item breach summaries - those are correctly preserved
-   as-is by the same code path, verified against a real multi-breach
-   fixture.
+- the delta state maps id -> `{ h: sha1-16 of the detail page (fields +
+header + party id + breach ids + breach list rows + fatality), d: register
+date (latest hearing ?? offence / served), o: still open, f: first
+delivered, l: last seen }` (`src/state.ts`);
+- delta mode re-fetches known records with `o=true` and `h != null` whose
+  `max(d, f) >= today - recheckDays` (default 180, cap 2,000 per run, newest
+  first) and emits `UPDATED` when the hash moved (`recheckKnown`);
+- `o` = true for every conviction with a detail page; for notices only
+  Improvement Notices whose Result is Ongoing/blank. Listing-only deliveries
+  (`fetchDetail=false`) and v1-migrated ids have `h=null` and are never
+  re-checked;
+- in full mode a known id whose hash moved is also emitted as `UPDATED`
+  (`finalEventType`).
 
 ## Architecture
 
-- `src/http.ts` - plain `fetch()` with retry, no proxy, no cookies.
-- `src/urls.ts` - the two hardcoded "all records, newest first" listing
-  queries plus detail/breach URL builders.
-- `src/parsers/listing.ts` - harvests detail-page ids straight from the
-  listing's own `<a href="..._details.asp?SF=CN&SV=<id>">` links (the
-  listing table's other columns are redundant with the detail page, so
-  they're not parsed at all) and the `Page X of Y` total.
-- `src/parsers/labelValueTable.ts` - one generic parser shared by all
-  three detail-page shapes (conviction detail, notice detail, breach
-  detail): pairs `<td>` cells two-at-a-time **within each row**, keyed by
-  the first cell's text (label markup differs - conviction/breach pages
-  wrap labels in `<strong>`, notice pages don't - so the parser matches by
-  position, not markup). Rows with an odd cell count (section headers like
-  "Location of Offence", the "Breach involved..." link row) have no pair
-  partner and are silently skipped - this is the same shape of fix as
-  Cordoba's checkbox bug and Mendoza's EVENTVALIDATION difference
-  elsewhere in this portfolio: verify the real markup, don't assume a
-  uniform row shape.
-- `src/parsers/noticeBreachList.ts` - the notices breach-list table (Act/
-  Regulation inline, no detail-page fetch needed).
-- `src/fetchListingIds.ts` - shared pagination loop for both registers.
-- `src/fetchConvictions.ts` / `src/fetchNotices.ts` - orchestrate
-  listing -> detail (-> breach) per record.
+- `src/input.ts` - validates and resolves the input into one `RegisterQuery`
+  per register (criteria in the site's vocabulary) + `RunOptions`; filter
+  fingerprint that names the delta store; relative dates; legacy
+  `dateRange`; conviction-only / notice-only filters warn when the register
+  is not selected.
+- `src/codes.ts` - picklist codes captured from the wizard, robots skip-list.
+- `src/urls.ts` - join grammar, listing / detail / breach / party paths.
+- `src/http.ts` - fetch with 30 s timeout, retry policy (network /
+  408/425/429/5xx, jittered backoff), `fetchOptional` (404/410/500 -> null),
+  `mapWithConcurrency`.
+- `src/parsers/listing.ts` (rows + markers + validity), `labelValueTable.ts`
+  (detail tables, header, fatality, isDetailPage), `breachList.ts`
+  (convictions breach list), `noticeBreachList.ts`, `party.ts`.
+- `src/fetchRecords.ts` - `walkListing()` (pagination + classification +
+  stop rules, no detail fetches), `selectRecheckIds()` / `recheckKnown()`
+  (UPDATED detection), `enrichBatch()` (detail + breach list + breach pages
+    - party page + party history with bounded concurrency), `buildConviction
+Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
+- `src/delivery.ts` - batches of 15, `Actor.pushData(items, eventName)`,
+  `chargedCount` accounting, `markSeen` after a successful push, persist
+  every 50 / on close / on `migrating` + `aborting`.
+- `src/state.ts` - named-store delta state v2, v1 adoption (unfiltered runs
+  only), 50k-entry prune per register.
+- `src/normalize.ts` - pure helpers (London calendar, dates, GBP, SIC,
+  postcode, country, Act / Regulation parsing, result and party
+  classification, notice-type flags, sha1 content hash, FNV store hash,
+  free-text sanitiser).
+- `src/main.ts` - orchestration per register: walk -> re-check -> deliver
+  (UPDATED first, then new oldest-first) -> mark excluded -> summary. Fails
+  the run on any extraction error; never pushes anything but records.
 
-## Delta engine (2026-09-06 retrofit)
+## Delta engine invariants (do not break these)
 
-Added `onlyNew`/`dateRange` input + a standardized B2B output envelope
-(`record_id`, `event_type`, `scraped_at`, `is_new`, `source_url`) across
-this portfolio's fleet. HSE-specific implementation notes:
+1. **State is written only for delivered records** (`markSeen` after a
+   successful `pushData`), plus, at the END of a successful run, for rows
+   that were walked but excluded by `eventTypes`; known rows just get their
+   last-seen date refreshed. `saveState` runs every 50 delivered records,
+   in `Delivery.close()` (finally) and on the platform `migrating` /
+   `aborting` events.
+2. **Delivery order**: UPDATED candidates first (they are re-detected next
+   run if lost), then new records **oldest-first**, so a crash leaves the
+   NEWEST candidates undelivered - exactly the rows the next walk visits
+   first. The dataset is therefore an append-only chronological log; the
+   views and README tell users to read it with `desc=true`.
+3. **Convictions are walked in full every run**; notices early-stop after 2
+   consecutive pages with no unseen id. There is no timestamp watermark.
+4. `maxItemsPerDataset` truncation (at walk and at delivery) never marks the
+   overflow as seen; it logs a warning.
+5. The delta store name defaults to `auto-<hash of filters>` (dates,
+   limits, fetch flags and the register selection excluded), so distinct
+   schedules never share memory unless `deltaStateName` says so. The v1
+   store is adopted only by an unfiltered run, as an id-only baseline.
+6. Charging: records with the case/notice page AND breach detail are pushed
+   with event `result`, everything lighter with `result-summary`;
+   `chargedCount` from the SDK is the number actually stored in PPE mode
+   (outside PPE everything is stored, nothing charged).
+7. Every listing page is validated; a SQL error page or a non-listing fails
+   the run after 2 retries. Never report "0 new" on a broken page.
 
-- `src/state.ts` opens a **named** key-value store
-  (`uk-hse-enforcement-monitor-delta-state`) rather than the run's default
-  one - Apify's default KV store is isolated per run and would not survive
-  between scheduled runs, which defeats the whole point of a delta. State
-  is keyed per dataset (`convictions`/`notices`) since case numbers and
-  notice numbers are independent id spaces; each dataset's seen-id list is
-  capped at 2000 entries (convictions only has ~200 total anyway; notices
-  grows slowly enough that 2000 covers many months of history).
-- `src/fetchListingIds.ts`'s early-stop: since both registers are already
-  sorted newest-first, `onlyNew=true` walks pages and stops after **2**
-  consecutive pages contain zero unseen ids (not 1) - a one-page safety
-  margin against minor reordering between runs. Verified live locally:
-  seeding state with a full cold run, then immediately re-running with
-  `onlyNew=true` correctly logged "stopping early at page 2" and returned
-  zero records, instead of walking all 21 convictions pages.
-- **Local testing gotcha**: `apify run` purges local storage by default
-  even without passing `--purge` explicitly (the CLI's own `--help` notes
-  "for crawlee projects, this is the default behavior") - use
-  `--no-purge` to test delta behavior across two separate local runs, or
-  the second run will see an empty seen-set and rediscover everything as
-  "new". The named state store itself is NOT touched by `--purge`/default
-  purging either way (only the run's default request-queue/dataset/KV
-  store are) - so state actually survives across runs regardless of the
-  flag; the flag only controls whether the OUTPUT dataset from the
-  previous run is cleared before the next one, which matters for reading
-  clean results but not for delta correctness.
-- `event_type` is set structurally, not by diffing fields: `'SANCTION'`
-  for every conviction (a conviction record inherently represents an
-  imposed sanction) and `'NEW_LISTING'` for every notice (an enforcement
-  notice is a new item appearing in the register, not itself a completed
-  sanction). This does not yet detect field-level updates to a
-  previously-seen record (e.g. a notice's Result changing from "Ongoing"
-  to something else) - that would require storing full prior snapshots
-  and diffing them, a materially bigger feature deferred for now and
-  disclosed in the README's Known Limitations.
-- **Cloud eventual-consistency note** (found during cloud verification,
-  2026-09-06): two `apify actors call` runs fired ~12 seconds apart
-  (cold seed, then an immediate `onlyNew` run) did NOT see each other's
-  state - the second run walked all 5 requested pages as if cold. A
-  third run ~90 seconds after the seed run correctly loaded the state
-  and stopped early. This reads as the platform's named-KV-store write
-  needing a short propagation window before it's reliably visible to a
-  freshly-started container, not a bug in `state.ts` - real scheduled
-  monitoring runs are spaced hours/days apart and won't hit this, but
-  don't be alarmed by a "why didn't it dedupe" result if you stress-test
-  two runs back-to-back within seconds.
-- `dateRange` filters on the record's own natural date field (Offence
-  Date for convictions, served-on date for notices) via
-  `src/dateFilter.ts`'s `parseUkDate` (DD/MM/YYYY, the format both fields
-  use). This is independent of, and a weaker "recency" signal than,
-  `onlyNew` for convictions specifically - Offence Date can lag real
-  publication by close to a year (see the original audit notes above:
-  newest offence date found live was ~11 months before the hearing that
-  actually published it), so a `dateRange: "24h"` filter on convictions
-  will often - correctly - return nothing, since offences are rarely
-  dated "today" even when newly published. This is disclosed in the
-  README, not silently misleading.
+## Tests
 
-## Known scope limits (disclosed, not hidden)
+- `npm test` - offline, ~1 s: 68 tests on real captured fixtures + mocked
+  HTTP (walk cold / delta / dedupe / maxItems / blocked, UPDATED through
+  hashes, record building, input, urls, normalisers, parsers) including an
+  end-to-end run of `src/main.ts` with the SDK mocked that asserts the
+  persist-after-delivery invariant under a spending limit.
+- `npm run test:live` (`LIVE=1`) - 9 live checks (~20 s): both registers
+  with full detail, name + region filter, inclusive date window, notice
+  type join, zero-result termination, SQL error page detection, re-check
+  semantics, missing-record 500.
+- Local end-to-end: put an input in `storage/key_value_stores/default/INPUT.json`
+  and `apify run --purge`; the delta store appears under
+  `storage/key_value_stores/uk-hse-enforcement-monitor-state-<name>/`
+  (`--purge` clears only the default stores, so a second run is a real delta
+  run). Verified 2026-09-07 with `{ nameContains: "Llanelec", onlyNew: true }`:
+  pass 1 delivered 22 notices, pass 2 delivered 0 (early-stop at page 2, 21
+  re-checked, 0 changed).
 
-- The Convictions register is small by design: HSE's own site states it
-  covers **the last 5 years only** (~200 records total at audit time,
-  2026-09-06) - not a bug, a stated retention policy. Notices has no such
-  disclosed cap (~30,000 records at audit time).
-- `description` is plain text, not reformatted or summarized.
-- The multi-select "Add a criteria" wizard supports many other search
-  dimensions (location, industry, HSE region, etc.) not exposed as actor
-  input - every run currently pulls the newest N records unfiltered,
-  matching the "recurring compliance monitor" use case this was built for
-  (CHAS/SSIP-style contractor vetting checks the _whole_ register for a
-  name match, not a pre-filtered slice).
+## Known scope limits (disclosed in the README)
+
+- `UPDATED` says the record's page changed, not WHAT changed (no field-level
+  diff; would need snapshot storage). A breach page changing without any
+  change on the case page or the case breach list is not detected.
+- Prohibition notices carry no Result on the register, so their status
+  cannot be tracked; withdrawn / appealed notices are not flagged by HSE.
+- Crown Censures (a separate small register under /convictions) are not
+  covered.
+- Party history lists read only the first page of the party's cases /
+  notices (10 ids) - the counts are exact, the id lists are capped.
+- No custodial-sentence server-side filter (code not found); use
+  `hasCustodialSentence` on the output instead.
