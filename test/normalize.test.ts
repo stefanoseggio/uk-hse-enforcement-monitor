@@ -68,6 +68,16 @@ describe('money and codes', () => {
         expect(extractPostcode('Hale Road, WIDNES, Cheshire, WA8 0TL, England')).toBe('WA8 0TL');
         expect(extractPostcode('Harvil Road, London, UB9, England')).toBe('UB9');
         expect(extractPostcode('Any Location Great Britain, , England')).toBeNull();
+        // The register splits some outward codes with a stray space (fixture
+        // conviction_breach_4763937001 renders SW17 as "S W17"; live notice
+        // 315841814 renders LS17 as "L S17"): the intended code, never "S17".
+        expect(extractPostcode('Vant Road, London, S W17, England')).toBe('SW17');
+        expect(extractPostcode('HQ A.M Scaffolding Ltd, Alwoodley Lane, Leeds, L S17, England')).toBe('LS17');
+        expect(extractPostcode('Alwoodley Lane, Leeds, L S17 8AB, England')).toBe('LS17 8AB');
+        expect(extractPostcode('Croescadarn Close, CARDIFF, CF23 8HE, Wales')).toBe('CF23 8HE');
+        expect(extractPostcode('12 High Street Sheffield S1 2AB, England')).toBe('S1 2AB');
+        expect(extractPostcode('Unit 5, Flat 2B, Sheffield, England')).toBeNull();
+        expect(extractPostcode(null)).toBeNull();
         expect(extractCountry('Croescadarn Close, CARDIFF, CF23 8HE, Wales')).toBe('Wales');
         expect(extractCountry('A+E Drainage and Plumbing, Any Location Great Britain, , England')).toBe('England');
         expect(extractCountry(null)).toBeNull();

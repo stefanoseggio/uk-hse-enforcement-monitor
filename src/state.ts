@@ -60,6 +60,15 @@ export interface DeltaState {
      * Null once a walk completed with everything stored.
      */
     backlogFloor: Record<DatasetName, string | null>;
+    /**
+     * Baseline per register: the id of the OLDEST record the first (cold)
+     * delta run delivered when its walk was cut short by maxItemsPerDataset.
+     * Unseen records below it are history, not news: the walk excludes them
+     * ('baseline'), never delivers them, and they never keep a walk alive.
+     * Null when the cold run walked the whole register (nothing is history).
+     * Never cleared except by resetState.
+     */
+    baselineFloor: Record<DatasetName, string | null>;
     lastRunAt: string | null;
     filtersSignature: string | null;
 }
@@ -82,6 +91,7 @@ export function emptyState(filtersSignature: string | null): DeltaState {
         seen: { convictions: {}, notices: {} },
         missing: { convictions: {}, notices: {} },
         backlogFloor: { convictions: null, notices: null },
+        baselineFloor: { convictions: null, notices: null },
         lastRunAt: null,
         filtersSignature,
     };
@@ -145,6 +155,11 @@ export async function loadState(storeName: string, options: LoadStateOptions): P
         stored.backlogFloor ??= { convictions: null, notices: null };
         stored.backlogFloor.convictions ??= null;
         stored.backlogFloor.notices ??= null;
+        // A store written before the baseline existed had its baseline cut by
+        // the page-granular early-stop instead; nothing to reconstruct.
+        stored.baselineFloor ??= { convictions: null, notices: null };
+        stored.baselineFloor.convictions ??= null;
+        stored.baselineFloor.notices ??= null;
         return stored;
     }
     if (adoptLegacy) {
@@ -190,6 +205,27 @@ export function markMissing(state: DeltaState, register: DatasetName, id: string
     const n = (previous?.n ?? 0) + 1;
     state.missing[register][id] = { n, l: today };
     return n;
+}
+
+/**
+ * A store that has never completed (or started persisting) a run: no record
+ * is known and no run has been recorded. The next delta run on it is the
+ * COLD run whose cap defines the baseline. Evaluated once at the start of a
+ * run - the run's own mid-way persists set lastRunAt.
+ */
+export function isColdState(state: DeltaState): boolean {
+    return (
+        state.lastRunAt === null &&
+        Object.keys(state.seen.convictions).length === 0 &&
+        Object.keys(state.seen.notices).length === 0
+    );
+}
+
+/** Sets a register's baseline (the cold run's oldest delivered id). Returns true when it changed. */
+export function setBaselineFloor(state: DeltaState, register: DatasetName, floor: string | null): boolean {
+    if (state.baselineFloor[register] === floor) return false;
+    state.baselineFloor[register] = floor;
+    return true;
 }
 
 /** Sets (or clears, with null) a register's walk watermark. Returns true when it changed. */

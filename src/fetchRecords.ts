@@ -180,7 +180,8 @@ export async function fetchDetailFor(register: DatasetName, id: string): Promise
 // Listing walk
 // ---------------------------------------------------------------------------
 
-export type ExclusionReason = 'known' | 'eventType' | 'robots';
+/** 'baseline': an unseen record below the cold run's baseline - history, never delivered in delta mode. */
+export type ExclusionReason = 'known' | 'eventType' | 'robots' | 'baseline';
 
 export interface Candidate {
     register: DatasetName;
@@ -209,6 +210,15 @@ export interface WalkOptions {
      * walk has reached it. Null when the previous walk left no backlog.
      */
     backlogFloor?: string | null;
+    /**
+     * Baseline (see state.ts): the oldest id the cold delta run delivered
+     * when its walk was cut short. Unseen records below it are excluded as
+     * 'baseline' - not delivered, and not counted as unseen for the
+     * early-stop. Null when the cold run saw the whole register.
+     */
+    baselineFloor?: string | null;
+    /** True on the run that defines the baseline (only changes the cap warning). Defaults to "nothing known yet". */
+    cold?: boolean;
 }
 
 export type StopReason = 'end-of-results' | 'no-more-pages' | 'max-items' | 'delta-early-stop' | 'page-cap';
@@ -264,6 +274,9 @@ async function loadListingPage(query: RegisterQuery, page: number) {
 export async function walkListing(options: WalkOptions): Promise<WalkResult> {
     const { query, maxItems, onlyNew, seen, eventTypes, fullWalk } = options;
     const backlogFloor = options.backlogFloor ?? null;
+    // The baseline only shapes delta walks: a full run delivers history too.
+    const baselineFloor = onlyNew ? (options.baselineFloor ?? null) : null;
+    const cold = options.cold ?? Object.keys(seen).length === 0;
     const { register } = query;
     const candidates: Candidate[] = [];
     const excluded: Candidate[] = [];
@@ -304,7 +317,10 @@ export async function walkListing(options: WalkOptions): Promise<WalkResult> {
             walkedIds.add(row.id);
             const prior = seen[row.id] ?? null;
             const isNew = prior === null;
-            if (isNew) pageHasUnseen = true;
+            // An unseen record entered before the baseline is history: it is
+            // neither delivered nor a reason to keep walking.
+            const belowBaseline = isNew && baselineFloor !== null && compareRecordIds(row.id, baselineFloor) < 0;
+            if (isNew && !belowBaseline) pageHasUnseen = true;
             const candidate: Candidate = {
                 register,
                 id: row.id,
@@ -318,6 +334,7 @@ export async function walkListing(options: WalkOptions): Promise<WalkResult> {
             if (register === 'convictions' && ROBOTS_DISALLOWED_CASE_NUMBERS.has(row.id))
                 candidate.excludedBy = 'robots';
             else if (onlyNew && !isNew) candidate.excludedBy = 'known';
+            else if (belowBaseline) candidate.excludedBy = 'baseline';
             else if (isNew && !eventTypes.has(structural)) candidate.excludedBy = 'eventType';
 
             if (candidate.excludedBy) {
@@ -326,9 +343,9 @@ export async function walkListing(options: WalkOptions): Promise<WalkResult> {
             }
             if (candidates.length >= maxItems) {
                 let catchUp = 'raise the cap or narrow the filters to get more in one run';
-                if (onlyNew && Object.keys(seen).length === 0) {
+                if (onlyNew && cold) {
                     catchUp =
-                        'this first delta run defines the baseline: the older records below the cap are not delivered by later runs - raise the cap now for a deeper baseline';
+                        'this first delta run defines the baseline: the older records below the cap are history and are never delivered by later delta runs - raise the cap now for a deeper baseline, or run once with onlyNew=false for the full history';
                 } else if (onlyNew) {
                     catchUp =
                         'the walk watermark makes the next delta run walk down to it instead of early-stopping on the records delivered today; raise the cap to catch up faster';

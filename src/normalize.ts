@@ -72,18 +72,40 @@ export function splitSic(value: string | null | undefined): { code: string | nul
     return { code: match[1], description: match[2].trim() || null };
 }
 
-// UK postcode (outward + inward), tolerant of the register's spacing quirks
-// ("S W17" is rendered for SW17 in at least one record; that one is left as is).
+// UK postcode (outward + inward). The register renders addresses as
+// comma-joined lines and sometimes splits an outward code with a stray
+// space ("S W17" for SW17, "L S17" for LS17 - live records): a line is
+// matched as written first, then with its spaces removed, so the stray
+// space yields the intended code instead of a wrong one ("S17").
 const POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
-const OUTWARD_ONLY_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)\b(?=\s*(?:,|$))/i;
+const COMPACT_POSTCODE_RE = /^([A-Z]{1,2}\d[A-Z\d]?)(\d[A-Z]{2})$/i;
+const COMPACT_OUTWARD_RE = /^([A-Z]{1,2}\d[A-Z\d]?)$/i;
+const TRAILING_OUTWARD_RE = /\b([A-Z]{1,2}\d[A-Z\d]?)$/i;
 
 /** Full postcode if present, else the outward code alone (e.g. "UB9"), else null. */
 export function extractPostcode(address: string | null | undefined): string | null {
     if (!address) return null;
-    const full = address.match(POSTCODE_RE);
-    if (full) return `${full[1].toUpperCase()} ${full[2].toUpperCase()}`;
-    const outward = address.match(OUTWARD_ONLY_RE);
-    return outward ? outward[1].toUpperCase() : null;
+    const lines = address
+        .split(',')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    // The postcode is the last line before the country: search from the end.
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        // A line that is nothing but a postcode is read without its spaces
+        // first, so "L S17 8AB" yields LS17 8AB rather than S17 8AB.
+        const compact = line.replace(/\s+/g, '');
+        const compactFull = compact.match(COMPACT_POSTCODE_RE);
+        if (compactFull) return `${compactFull[1].toUpperCase()} ${compactFull[2].toUpperCase()}`;
+        const compactOutward = compact.match(COMPACT_OUTWARD_RE);
+        if (compactOutward) return compactOutward[1].toUpperCase();
+        // A postcode at the end of a longer line ("12 High Street Sheffield S1 2AB").
+        const full = line.match(POSTCODE_RE);
+        if (full) return `${full[1].toUpperCase()} ${full[2].toUpperCase()}`;
+        const outward = line.match(TRAILING_OUTWARD_RE);
+        if (outward) return outward[1].toUpperCase();
+    }
+    return null;
 }
 
 const COUNTRIES = ['England', 'Scotland', 'Wales', 'Jersey', 'Northern Ireland', 'Guernsey', 'Isle of Man'];

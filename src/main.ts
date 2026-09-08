@@ -10,12 +10,14 @@ import { lowestRecordId, siteCalendarDate } from './normalize.js';
 import type { DeltaState } from './state.js';
 import {
     clearMissing,
+    isColdState,
     loadState,
     markMissing,
     markSeen,
     MISSING_RUNS_BEFORE_CLOSED,
     saveState,
     setBacklogFloor,
+    setBaselineFloor,
     stateStoreName,
 } from './state.js';
 import type { DatasetName, RegisterQuery } from './types.js';
@@ -35,6 +37,8 @@ interface RegisterOutcome {
     truncatedByMaxItems: boolean;
     /** Walk watermark left for the next run (null = no backlog under the delivered records). */
     backlogFloor: string | null;
+    /** Baseline: unseen records below this id are history and are never delivered in delta mode (null = none). */
+    baselineFloor: string | null;
 }
 
 async function processRegister(
@@ -44,6 +48,7 @@ async function processRegister(
     state: DeltaState,
     delivery: Delivery,
     today: string,
+    cold: boolean,
 ): Promise<RegisterOutcome> {
     const seen = state.seen[register];
     // The convictions register is ~210 records (21 pages) and its entry
@@ -51,11 +56,12 @@ async function processRegister(
     // in full; notices (30k) early-stop after two fully-known pages - unless
     // a walk watermark says a backlog is still waiting further down.
     const fullWalk = register === 'convictions';
-    // A cold register (nothing known yet) delivers the newest records up to
-    // the cap as its baseline: what lies below the cap is deliberately never
-    // walked, so a capped cold walk sets no watermark. Any later capped walk
-    // does - its overflow is a backlog, not a baseline.
-    const cold = Object.keys(seen).length === 0;
+    // The COLD run (a store that never completed a run) delivers the newest
+    // records up to the cap as the baseline and remembers the oldest one it
+    // took as the register's baseline floor: unseen records below it are
+    // history, excluded by every later delta walk. Only a NON-cold capped
+    // walk leaves a backlog (a watermark) - its overflow is news that the
+    // next run must reach.
     const floorBefore = fullWalk ? null : state.backlogFloor[register];
     const walk = await walkListing({
         query,
@@ -65,23 +71,51 @@ async function processRegister(
         eventTypes: options.eventTypes,
         fullWalk,
         backlogFloor: floorBefore,
+        baselineFloor: options.onlyNew ? state.baselineFloor[register] : null,
+        cold,
     });
     const matched = walk.totalMatching !== null ? walk.totalMatching.toLocaleString('en-GB') : 'unknown';
     log.info(
         `${register} walk finished: ${walk.candidates.length} to deliver, ${walk.excluded.length} excluded, ${walk.pagesWalked} page(s), stop=${walk.stopReason}, ${matched} matching on HSE.`,
     );
 
+    const walkIncomplete = walk.stopReason === 'max-items' || walk.stopReason === 'page-cap';
+
+    // Baseline (cold delta run only): a walk cut short by the cap defines it
+    // as the oldest record taken - persisted before delivery, so even a run
+    // that dies half-way has fixed what counts as history. A cold walk that
+    // reached the end saw everything: no baseline, nothing is history. A
+    // cold run never records a backlog floor: what it could not store sits
+    // ABOVE the stored block (delivery is oldest-first) and is unseen, so the
+    // next walk meets it before any known page.
+    if (options.onlyNew && cold) {
+        if (walkIncomplete) {
+            const baseline = lowestRecordId(walk.candidates.map((c) => c.id)) ?? walk.stoppedAtId;
+            if (setBaselineFloor(state, register, baseline)) {
+                delivery.noteStateChanged();
+                await delivery.persist();
+            }
+            log.info(
+                `${register}: baseline set at ${baseline ?? 'n/a'} - this first delta run delivers the ${walk.candidates.length} most recently entered matching record(s); the matching records below it (${matched} match in total) are history and later delta runs deliver only what is entered above it (run once with onlyNew=false for the full history).`,
+            );
+        } else {
+            log.info(
+                `${register}: first delta run walked the whole register - nothing is history, no baseline needed.`,
+            );
+        }
+    }
+
     // Walk watermark, part 1 (before anything is pushed): the backlog this
     // run may leave behind is bounded above by the walk's stop point (when
     // it was cut short) and by every candidate not stored yet - persist that
     // now so a crash half-way through delivery cannot strand anything.
-    const walkIncomplete = walk.stopReason === 'max-items' || walk.stopReason === 'page-cap';
+    const trackBacklog = options.onlyNew && !fullWalk && !cold;
     const backlogTops = (unstored: readonly string[]): (string | null)[] => [
         ...unstored,
-        walkIncomplete && !cold ? walk.stoppedAtId : null,
+        walkIncomplete ? walk.stoppedAtId : null,
         walkIncomplete ? floorBefore : null,
     ];
-    if (options.onlyNew && !fullWalk) {
+    if (trackBacklog) {
         const provisional = lowestRecordId(backlogTops(walk.candidates.map((c) => c.id)));
         if (setBacklogFloor(state, register, provisional)) {
             delivery.noteStateChanged();
@@ -140,7 +174,7 @@ async function processRegister(
     // still a backlog. A completed walk whose candidates were all stored
     // clears the floor; an incomplete one keeps the lower of its stop point
     // and the previous floor (the older backlog was not reached).
-    if (options.onlyNew && !fullWalk) {
+    if (trackBacklog) {
         const floorAfter = lowestRecordId(backlogTops(delivered.unstoredNewIds));
         if (setBacklogFloor(state, register, floorAfter)) delivery.noteStateChanged();
         if (floorAfter !== null) {
@@ -161,6 +195,7 @@ async function processRegister(
         deferredMissingDetail: delivered.deferredMissingDetail,
         truncatedByMaxItems: walk.truncatedByMaxItems || delivered.truncatedByMaxItems,
         backlogFloor: state.backlogFloor[register],
+        baselineFloor: state.baselineFloor[register],
     };
 }
 
@@ -203,15 +238,26 @@ async function run(): Promise<void> {
         adoptLegacy: !resolved.hasFilters,
         today,
     });
+    // Decided once, before anything is persisted (the run's own mid-way
+    // persists set lastRunAt): the cold run is the one that sets the baseline.
+    const cold = options.onlyNew && isColdState(state);
     log.info(
-        `Delta state store: ${storeName} (${Object.keys(state.seen.convictions).length} known cases, ${Object.keys(state.seen.notices).length} known notices, notices walk watermark ${state.backlogFloor.notices ?? 'none'})`,
+        `Delta state store: ${storeName} (${cold ? 'cold - this run sets the baseline; ' : ''}${Object.keys(state.seen.convictions).length} known cases, ${Object.keys(state.seen.notices).length} known notices, notices walk watermark ${state.backlogFloor.notices ?? 'none'}, baseline convictions ${state.baselineFloor.convictions ?? 'none'} / notices ${state.baselineFloor.notices ?? 'none'})`,
     );
 
     const delivery = new Delivery(state, storeName, runAt, options, now);
     const outcomes: Partial<Record<DatasetName, RegisterOutcome>> = {};
     try {
         for (const register of options.datasets) {
-            outcomes[register] = await processRegister(register, queries[register], options, state, delivery, today);
+            outcomes[register] = await processRegister(
+                register,
+                queries[register],
+                options,
+                state,
+                delivery,
+                today,
+                cold,
+            );
             if (delivery.chargeLimitReached) break;
         }
     } finally {
@@ -219,14 +265,16 @@ async function run(): Promise<void> {
     }
 
     // Records that were walked but intentionally not delivered (filtered by
-    // event type) become "seen" only once the run completed normally - never
-    // on a crash, so nothing is lost. Known records just get their last-seen
-    // date refreshed.
+    // event type, or history below the baseline) become "seen" only once the
+    // run completed normally - never on a crash, so nothing is lost. They
+    // carry no hash (their page was never read), so they are never
+    // re-checked for amendments. Known records just get their last-seen date
+    // refreshed.
     for (const register of options.datasets) {
         const outcome = outcomes[register];
         if (!outcome) continue;
         for (const c of outcome.walk.excluded) {
-            if (c.excludedBy === 'eventType') {
+            if (c.excludedBy === 'eventType' || c.excludedBy === 'baseline') {
                 markSeen(state, register, c.id, { hash: null, dateIso: null, open: false }, today);
             } else if (c.excludedBy === 'known' && state.seen[register][c.id]) {
                 state.seen[register][c.id].l = today;
@@ -252,6 +300,7 @@ async function run(): Promise<void> {
         recheckClosed: mapOutcomes(outcomes, (o) => o.recheckClosed),
         deferredMissingDetail: mapOutcomes(outcomes, (o) => o.deferredMissingDetail),
         backlogFloor: mapOutcomes(outcomes, (o) => o.backlogFloor),
+        baselineFloor: mapOutcomes(outcomes, (o) => o.baselineFloor),
         truncatedByMaxItems: Object.values(outcomes).some((o) => o?.truncatedByMaxItems === true),
         chargeLimitReached: delivery.chargeLimitReached,
         excluded: countBy(

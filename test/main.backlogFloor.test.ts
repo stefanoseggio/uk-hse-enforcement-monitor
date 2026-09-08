@@ -153,6 +153,7 @@ describe('main.ts walk watermark on the notices register', () => {
         expect(day1.ids).toEqual([...B1, ...B2].reverse()); // oldest-first delivery of the 20 newest
         expect(day1.output.stopReason.notices).toBe('max-items');
         expect(day1.state.backlogFloor.notices).toBeNull(); // below the cold cap is deliberately pre-baseline
+        expect((day1.state as { baselineFloor: { notices: string | null } }).baselineFloor.notices).toBe(B2[9]);
         expect(Object.keys(day1.state.seen.notices).length).toBe(20);
     });
 

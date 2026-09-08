@@ -210,12 +210,13 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
   `chargedCount` accounting, `markSeen` after a successful push, persist
   every 50 / on close / on `migrating` + `aborting`.
 - `src/state.ts` - named-store delta state v2 (`seen`, `missing`,
-  `backlogFloor` per register), v1 adoption (unfiltered runs only),
-  50k-entry prune per register.
+  `backlogFloor` and `baselineFloor` per register, `isColdState`), v1
+  adoption (unfiltered runs only), 50k-entry prune per register.
 - `src/normalize.ts` - pure helpers (London calendar, dates, GBP, SIC,
-  postcode, country, Act / Regulation parsing, result and party
-  classification, notice-type flags, sha1 content hash, FNV store hash,
-  free-text sanitiser).
+  postcode - per address line, spaces removed first, because the register
+  renders "S W17" / "L S17" for SW17 / LS17 - country, Act / Regulation
+  parsing, result and party classification, notice-type flags, sha1
+  content hash, FNV store hash, free-text sanitiser).
 - `src/main.ts` - orchestration per register: walk -> re-check -> deliver
   (UPDATED first, then new oldest-first) -> mark excluded -> summary. Fails
   the run on any extraction error; never pushes anything but records.
@@ -224,8 +225,8 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
 
 1. **State is written only for delivered records** (`markSeen` after a
    successful `pushData`), plus, at the END of a successful run, for rows
-   that were walked but excluded by `eventTypes`; known rows just get their
-   last-seen date refreshed. `saveState` runs every 50 delivered records,
+   that were walked but excluded by `eventTypes` or as pre-baseline
+   history (3b); known rows just get their last-seen date refreshed. `saveState` runs every 50 delivered records,
    in `Delivery.close()` (finally) and on the platform `migrating` /
    `aborting` events.
 2. **Delivery order**: UPDATED candidates first (they are re-detected next
@@ -243,16 +244,41 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
    delivery to the lowest of {candidates NOT stored, stop id, previous
    floor if incomplete} (null = no backlog). `walkListing` refuses the
    2-known-pages early-stop while the current page's lowest id is above
-   the floor. A COLD register (empty seen-set) never records its stop id:
-   the first delta run's cap is the baseline and what lies below is
-   deliberately never walked. Convictions ignore the floor (full walk).
-   Regression: `test/walkListing.test.ts` "walk watermark" and
+   the floor. Convictions ignore the floor (full walk). A COLD run (see
+   3b) never records a backlog floor. Regression:
+   `test/walkListing.test.ts` "walk watermark" and
    `test/main.backlogFloor.test.ts` (cap, spending limit, crash before
    the first push).
+   3b. **Baseline (`state.baselineFloor[register]`)**: the COLD delta run -
+   `isColdState`: no seen entry on either register and no `lastRunAt`,
+   decided ONCE in `run()` before anything is persisted (the run's own
+   mid-way persists set `lastRunAt`) - that is cut short by the cap
+   (`max-items` / `page-cap`) persists, per register and BEFORE delivery,
+   the id of the oldest candidate it took (= the lowest id, entry order
+   is id-descending). On every later delta run `walkListing` excludes an
+   UNSEEN row whose id is below the floor as `'baseline'`: not delivered,
+   not counted as unseen for the early-stop, and marked seen at the end
+   of a successful run (`h=null, o=false` - its page was never read, so
+   it is never re-checked; a full run with `onlyNew=false` delivers it).
+   The baseline is never cleared except by `resetState`; a cold walk that
+   reaches the end sets none (nothing is history); a full run neither
+   uses nor sets it. This is what makes "the first run's cap is the
+   baseline" true for ANY cap - the page-granular early-stop alone only
+   held for caps of two full pages or more (a cap of 4 used to drain the
+   whole register, 4 records per run). Regression:
+   `test/walkListing.test.ts` "baseline" and
+   `test/main.baselineFloor.test.ts` (cold cap 4 on 30 rows -> 0 on the
+   next run, only new entries later, a non-cold capped run still writes a
+   backlog floor, a complete cold walk sets none, full run ignores it).
 4. **Convictions are walked in full every run**; notices early-stop after 2
    consecutive pages with no unseen id, subject to (3).
 5. `maxItemsPerDataset` truncation (at walk and at delivery) never marks the
-   overflow as seen; it logs a warning and leaves the watermark (3).
+   overflow as seen; it logs a warning, sets `truncatedByMaxItems` and
+   leaves the watermark (3). `Delivery.deliver` advances its offset by the
+   length of the batch it actually took (a batch is shortened to the room
+   left under the cap), so a cap that is not a multiple of the batch size
+   (15) still reports the queue's tail as truncated
+   (`test/delivery.test.ts`: queue 25, cap 20).
 6. The delta store name defaults to `auto-<hash of filters>` (dates,
    limits, fetch flags and the register selection excluded), so distinct
    schedules never share memory unless `deltaStateName` says so. The v1
@@ -286,19 +312,22 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
 
 ## Tests
 
-- `npm test` - offline, ~1 s: 94 tests on real captured fixtures + mocked
+- `npm test` - offline, ~1 s: 105 tests on real captured fixtures + mocked
   HTTP (walk cold / delta / dedupe / maxItems / blocked / 8-column
-  improvement listing / walk watermark on synthetic multi-page notice
-  listings, UPDATED through hashes, outage guard incl. timeouts, record
-  building incl. listing-only improvement notices, input incl. SIC routing
-  and fingerprint, urls, normalisers incl. id ordering, parsers) including
-  three end-to-end runs of `src/main.ts` with the SDK mocked: the
-  persist-after-delivery invariant under a spending limit, the
-  missing-detail policy across several calendar days (deferral, stub after
-  3 runs, close after 2 re-checks, outage guard on both paths, timeout
-  deferral), and the walk watermark across days (cold baseline, cap ->
-  floor -> backlog delivered, spending limit inside a hole, crash before
-  the first push).
+  improvement listing / walk watermark and baseline on synthetic
+  multi-page notice listings, UPDATED through hashes, outage guard incl.
+  timeouts, record building incl. listing-only improvement notices, input
+  incl. SIC routing and fingerprint, urls, normalisers incl. id ordering
+  and spaced postcodes, parsers, `Delivery.deliver` under a cap that is
+  not a multiple of the batch size) including four end-to-end runs of
+  `src/main.ts` with the SDK mocked: the persist-after-delivery invariant
+  under a spending limit, the missing-detail policy across several
+  calendar days (deferral, stub after 3 runs, close after 2 re-checks,
+  outage guard on both paths, timeout deferral - seeded with a non-cold
+  store so the cap drains the register as the guard sample needs), the
+  walk watermark across days (cap -> floor -> backlog delivered, spending
+  limit inside a hole, crash before the first push) and the baseline
+  across days (cold cap 4 on 30 rows, nothing older ever delivered).
 - `npm run test:live` (`LIVE=1`) - 14 live checks (~25 s): both registers
   with full detail, name + region filter, inclusive date window, notice
   type join, Improvement code -> 8-column listing (single and mixed with
@@ -320,13 +349,23 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
   `{ datasets: ["notices"], noticeTypes: ["08"], localAuthorityContains: "Sheffield", onlyNew: true, maxItemsPerDataset: 20, fetchBreachDetail: false, fetchPartyDetail: false }`
   (82 matching, store `auto-67fe1994`): pass 1 (cold, `resetState`) walked
   3 pages, delivered 20, stop `max-items`, `backlogFloor` null (cold cap =
-  baseline); pass 2 delivered 0, early-stop at page 2; pass 3 with the
+  baseline; a store from before the baseline floor existed - the same now
+  holds for any cap, see the 2026-09-08 runs below); pass 2 delivered 0,
+  early-stop at page 2; pass 3 with the
   floor seeded to the cold run's stop id 314106790 (what a capped non-cold
   run writes) logged "page 2 is fully known but ... walking on", delivered
   the 20 records under the two known pages, hit the cap on page 5 and
   persisted the new floor 313548265. The site never adds entries on demand,
   so the offline `main.backlogFloor` test is the regression for the cap ->
   floor -> backlog sequence.
+  Baseline, verified 2026-09-08 with
+  `{ datasets: ["notices"], noticeTypes: ["08"], localAuthorityContains: "Leeds", onlyNew: true, maxItemsPerDataset: 4, fetchBreachDetail: false, fetchPartyDetail: false, deltaStateName: "fix-r4-e2e" }`
+  (63 matching): pass 1 (cold, `resetState`) walked 1 page, delivered 4,
+  stop `max-items`, `baselineFloor` 315841814, `backlogFloor` null; pass 2
+  (delta) delivered 0 - early-stop at page 2, 4 excluded as known and 16 as
+  `baseline` (remembered with `h=null`), the baseline unchanged. Before the
+  baseline floor the same input delivered 4 pre-baseline notices per run
+  until all 63 had been charged.
 
 ## Known scope limits (disclosed in the README)
 

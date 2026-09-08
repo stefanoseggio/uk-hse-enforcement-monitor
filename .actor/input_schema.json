@@ -352,7 +352,7 @@
             "sectionCaption": "Limits & performance",
             "title": "Max records per register",
             "type": "integer",
-            "description": "Hard cap on delivered records per selected register (and therefore on cost: you pay per record). In delta mode the overflow is delivered by the following runs: the walk remembers where it stopped (a per-register watermark in the delta memory) and the next run walks down to that point instead of stopping at the records already delivered. On the very first delta run the cap defines the baseline - older records below it are not delivered later.",
+            "description": "Hard cap on delivered records per selected register (and therefore on cost: you pay per record). On the very first delta run the cap defines the baseline: the oldest record that run delivers is remembered per register, and records entered before it are history - later delta runs never deliver or charge for them, whatever the cap (run once with onlyNew=false, or set a high cap on the first run, if you want the history). On every later delta run the overflow is a backlog: the walk remembers where it stopped (a per-register watermark in the delta memory) and the next run walks down to that point instead of stopping at the records already delivered.",
             "editor": "number",
             "default": 100,
             "minimum": 1,

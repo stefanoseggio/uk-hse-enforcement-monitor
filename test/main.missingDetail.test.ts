@@ -124,6 +124,19 @@ describe('main.ts missing-detail policy (HTTP 500 = unknown id OR outage)', () =
 
     it('holds a new record back - not stored, not marked seen - while its page is missing, then stubs it after 3 runs', async () => {
         missingIds.add(HELD);
+        // A store that completed an earlier run (it matched nothing then), so
+        // this is NOT the cold run: the cap of 3 leaves a backlog rather than a
+        // baseline and the whole register drains over the following days -
+        // which the re-check outage test below relies on (10 known records).
+        kv.set('state', {
+            version: 2,
+            seen: { convictions: {}, notices: {} },
+            missing: { convictions: {}, notices: {} },
+            backlogFloor: { convictions: null, notices: null },
+            baselineFloor: { convictions: null, notices: null },
+            lastRunAt: '2026-09-06T12:00:00.000Z',
+            filtersSignature: null,
+        });
 
         const day1 = await runOn('2026-09-07');
         expect(failMessage).toBeNull();

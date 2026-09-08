@@ -309,6 +309,71 @@ describe('walk watermark (backlogFloor): a capped delta walk never strands the o
     });
 });
 
+describe('baseline (baselineFloor): unseen records below the cold cap are history, never delivered', () => {
+    // Entry order: 30 rows on three pages. A cold run with cap 4 delivered
+    // TOP[0..3]; TOP[3] is the baseline. Everything under it is unseen but
+    // must neither be delivered nor keep the walk alive.
+    const P1 = tenIdsFrom(916000130);
+    const P2 = tenIdsFrom(916000120);
+    const P3 = tenIdsFrom(916000110);
+    const BASELINE_ID = P1[3];
+    const seenTop4 = (): Record<string, StateEntry> => {
+        const seen: Record<string, StateEntry> = {};
+        for (const id of P1.slice(0, 4)) seen[id] = entry();
+        return seen;
+    };
+
+    beforeEach(() => {
+        fetchWithRetryMock.mockReset();
+        fetchOptionalMock.mockReset();
+        servePages(noticePage(P1), noticePage(P2), noticePage(P3), NOT_PAST_END);
+    });
+
+    it('excludes every unseen row below the baseline as "baseline" and early-stops after two such pages', async () => {
+        const run = await walk(NOT, {
+            onlyNew: true,
+            seen: seenTop4(),
+            fullWalk: false,
+            maxItems: 4,
+            baselineFloor: BASELINE_ID,
+        });
+        expect(run.candidates).toEqual([]);
+        expect(run.stopReason).toBe('delta-early-stop');
+        expect(run.pagesWalked).toBe(2);
+        expect(run.truncatedByMaxItems).toBe(false);
+        expect(run.excluded.filter((c) => c.excludedBy === 'known').map((c) => c.id)).toEqual(P1.slice(0, 4));
+        expect(run.excluded.filter((c) => c.excludedBy === 'baseline').map((c) => c.id)).toEqual([
+            ...P1.slice(4),
+            ...P2,
+        ]);
+    });
+
+    it('delivers only the unseen rows above the baseline, whatever the cap', async () => {
+        const NEW = tenIdsFrom(916000140);
+        const shifted = [...NEW, ...P1, ...P2, ...P3];
+        servePages(...[0, 10, 20, 30].map((i) => noticePage(shifted.slice(i, i + 10))), NOT_PAST_END);
+        const run = await walk(NOT, {
+            onlyNew: true,
+            seen: seenTop4(),
+            fullWalk: false,
+            maxItems: 100,
+            baselineFloor: BASELINE_ID,
+        });
+        expect(run.candidates.map((c) => c.id)).toEqual(NEW);
+        expect(run.stopReason).toBe('delta-early-stop');
+        expect(run.excluded.every((c) => c.excludedBy === 'known' || c.excludedBy === 'baseline')).toBe(true);
+    });
+
+    it('applies to the full-walk register too (convictions), and a full run (onlyNew=false) ignores it', async () => {
+        servePages(CONV_DCN_P1, CONV_PAST_END);
+        const delta = await walk(CONV, { onlyNew: true, seen: {}, baselineFloor: convP1Ids[2] });
+        expect(delta.candidates.map((c) => c.id)).toEqual(convP1Ids.slice(0, 3)); // the baseline row itself is not below it
+        expect(delta.excluded.filter((c) => c.excludedBy === 'baseline').length).toBe(convP1Ids.length - 3);
+        const full = await walk(CONV, { onlyNew: false, seen: {}, baselineFloor: convP1Ids[2] });
+        expect(full.candidates.length).toBe(convP1Ids.length);
+    });
+});
+
 describe('UPDATED detection through content hashes (the register has no timestamps)', () => {
     beforeEach(() => {
         fetchWithRetryMock.mockReset();

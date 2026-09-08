@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1 - 2026-09-08
+
+### Fixed
+
+- **The first delta run's cap now really is the baseline, whatever the cap.** The promise "on the first delta run the cap defines the baseline" only held for caps of two full listing pages (20) or more: with a smaller cap the page-granular early-stop never met two fully-known pages, so every following run delivered - and charged for - the next slice of older records until the whole matching register had been drained (a cap of 4 on 63 matching notices meant ~16 runs and 63 charged records instead of 4). The cold run (a delta memory that never completed a run) that is cut short by `maxItemsPerDataset` now persists, per register and before it delivers anything, the oldest record it took as a **baseline floor**; later delta runs exclude unseen records below it as history (excluded as `baseline`, never delivered, never charged, never a reason to keep walking, remembered as known at the end of a successful run), while entries above it are news as before. A cold run never writes a walk watermark; a later capped run still does, so a backlog is still drained. The baseline is cleared only by `resetState` and ignored by a full run (`onlyNew: false`). `OUTPUT.baselineFloor` reports it. README, input description and AGENTS.md now say exactly this.
+- `OUTPUT.truncatedByMaxItems`, the "maxItemsPerDataset reached" warning and the status message were missing when the delivery queue (updated + new records) exceeded a cap that is not a multiple of 15 - the default 100 included: the delivery loop advanced by the nominal batch size even when the last batch had been shortened to the room left under the cap, and skipped the tail without reporting it. The offset now advances by what each batch actually took, and whatever was not attempted (for any reason but the spending limit) is reported as truncated. No record was lost (the walk watermark already covered the tail).
+- `postcode` / `partyPostcode` for addresses where the register splits the outward code with a stray space ("L S17" for LS17 on notice 315841814, "S W17" for SW17) came out as the wrong code ("S17"). Each address line is now read without its spaces first, so those yield `LS17` / `SW17` (and "L S17 8AB" yields `LS17 8AB`).
+
 ## 2.0.0 - 2026-09-07
 
 The "institutional-grade" release: same envelope, far more data, server-side filters, and a delta engine that catches late-published cases and amended notices.

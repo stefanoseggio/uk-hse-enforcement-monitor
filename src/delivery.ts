@@ -67,16 +67,16 @@ export class Delivery {
         let consecutiveNotFound = 0;
         const droppedByEventType: string[] = [];
         const storedIds = new Set<string>();
-        for (let offset = 0; offset < queue.length && !this.chargeLimitReached; offset += DELIVERY_BATCH_SIZE) {
+        let offset = 0;
+        while (offset < queue.length && !this.chargeLimitReached) {
             const room = maxItems - count;
-            if (room <= 0) {
-                truncatedByMaxItems = true;
-                log.warning(
-                    `${register}: maxItemsPerDataset=${maxItems} reached - ${queue.length - offset} record(s) left undelivered for the next run.`,
-                );
-                break;
-            }
+            if (room <= 0) break;
+            // A batch is shortened to the room left under the cap, so the
+            // offset must advance by what was actually taken - never by the
+            // nominal batch size, or the tail of the queue would be skipped
+            // without being reported as truncated.
             const batch = queue.slice(offset, offset + Math.min(DELIVERY_BATCH_SIZE, room));
+            offset += batch.length;
             const built = await enrichBatch(batch, {
                 fetchDetail: this.options.fetchDetail,
                 fetchBreachDetail: this.options.fetchBreachDetail,
@@ -174,6 +174,14 @@ export class Delivery {
             }
             if (this.sinceLastPersist >= PERSIST_EVERY_N_DELIVERED) await this.persist();
             log.info(`${register}: delivered ${count}/${Math.min(queue.length, maxItems)}.`);
+        }
+        // Whatever was not even attempted - for any reason but the spending
+        // limit - was cut off by the cap: say so (OUTPUT and status message).
+        if (offset < queue.length && !this.chargeLimitReached) {
+            truncatedByMaxItems = true;
+            log.warning(
+                `${register}: maxItemsPerDataset=${maxItems} reached - ${queue.length - offset} record(s) left undelivered for the next run.`,
+            );
         }
         if (droppedByEventType.length > 0) {
             log.info(`${register}: ${droppedByEventType.length} record(s) skipped by eventTypes after detail fetch.`);
