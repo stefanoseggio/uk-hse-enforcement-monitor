@@ -8,12 +8,14 @@ import {
     classifyBreachResult,
     classifyNoticeType,
     classifyPartyStatus,
+    compareRecordIds,
     contentHash,
     daysBetween,
     extractCountry,
     extractNoticeItemIds,
     extractPostcode,
     isOpenNoticeResult,
+    lowestRecordId,
     parseActReference,
     parseGbp,
     parseRegulationReference,
@@ -201,6 +203,12 @@ export interface WalkOptions {
     eventTypes: ReadonlySet<EventType>;
     /** Never early-stop: walk every page of the (small) register. */
     fullWalk: boolean;
+    /**
+     * Walk watermark (see state.ts): undelivered records may exist at or
+     * below this id, so the known-pages early-stop is suppressed until the
+     * walk has reached it. Null when the previous walk left no backlog.
+     */
+    backlogFloor?: string | null;
 }
 
 export type StopReason = 'end-of-results' | 'no-more-pages' | 'max-items' | 'delta-early-stop' | 'page-cap';
@@ -214,6 +222,12 @@ export interface WalkResult {
     pagesWalked: number;
     stopReason: StopReason;
     truncatedByMaxItems: boolean;
+    /**
+     * Incomplete walks only ('max-items' / 'page-cap'): the id of the first
+     * matching record the walk did NOT take. Every unvisited record is at or
+     * below it - the top of the backlog the next run must reach.
+     */
+    stoppedAtId: string | null;
 }
 
 const CONSECUTIVE_KNOWN_PAGES_TO_STOP = 2;
@@ -249,6 +263,7 @@ async function loadListingPage(query: RegisterQuery, page: number) {
  */
 export async function walkListing(options: WalkOptions): Promise<WalkResult> {
     const { query, maxItems, onlyNew, seen, eventTypes, fullWalk } = options;
+    const backlogFloor = options.backlogFloor ?? null;
     const { register } = query;
     const candidates: Candidate[] = [];
     const excluded: Candidate[] = [];
@@ -260,10 +275,20 @@ export async function walkListing(options: WalkOptions): Promise<WalkResult> {
         pagesWalked: number,
         totalMatching: number | null,
         truncatedByMaxItems = false,
-    ): WalkResult => ({ candidates, excluded, totalMatching, pagesWalked, stopReason, truncatedByMaxItems });
+        stoppedAtId: string | null = null,
+    ): WalkResult => ({
+        candidates,
+        excluded,
+        totalMatching,
+        pagesWalked,
+        stopReason,
+        truncatedByMaxItems,
+        stoppedAtId,
+    });
 
     let totalMatching: number | null = null;
     let consecutiveKnownPages = 0;
+    let floorNoted = false;
     let page = 1;
     for (;;) {
         const listing = await loadListingPage(query, page);
@@ -300,10 +325,18 @@ export async function walkListing(options: WalkOptions): Promise<WalkResult> {
                 continue;
             }
             if (candidates.length >= maxItems) {
+                let catchUp = 'raise the cap or narrow the filters to get more in one run';
+                if (onlyNew && Object.keys(seen).length === 0) {
+                    catchUp =
+                        'this first delta run defines the baseline: the older records below the cap are not delivered by later runs - raise the cap now for a deeper baseline';
+                } else if (onlyNew) {
+                    catchUp =
+                        'the walk watermark makes the next delta run walk down to it instead of early-stopping on the records delivered today; raise the cap to catch up faster';
+                }
                 log.warning(
-                    `${register}: maxItemsPerDataset=${maxItems} reached on page ${page} - at least one more matching record was NOT delivered this run (it stays undelivered and will be picked up by the next delta run; raise the cap to catch up faster).`,
+                    `${register}: maxItemsPerDataset=${maxItems} reached on page ${page} at record ${row.id} - the remaining matching records were NOT delivered this run (${catchUp}).`,
                 );
-                return done('max-items', page, totalMatching, true);
+                return done('max-items', page, totalMatching, true, row.id);
             }
             candidates.push(candidate);
         }
@@ -316,17 +349,34 @@ export async function walkListing(options: WalkOptions): Promise<WalkResult> {
         if (onlyNew && !fullWalk) {
             consecutiveKnownPages = pageHasUnseen ? 0 : consecutiveKnownPages + 1;
             if (consecutiveKnownPages >= CONSECUTIVE_KNOWN_PAGES_TO_STOP) {
-                log.info(
-                    `${register}: delta early-stop at page ${page} - ${CONSECUTIVE_KNOWN_PAGES_TO_STOP} consecutive pages with no unseen record.`,
-                );
-                return done('delta-early-stop', page, totalMatching);
+                // Known pages only prove "nothing new ABOVE here". A previous
+                // run that stopped at its cap (or did not store every
+                // candidate) left undelivered records further down, under
+                // the very records it delivered - so the stop is deferred
+                // until the walk has reached that watermark.
+                const pageLowestId = lowestRecordId(listing.rows.map((r) => r.id));
+                const aboveFloor =
+                    backlogFloor !== null && pageLowestId !== null && compareRecordIds(pageLowestId, backlogFloor) > 0;
+                if (aboveFloor) {
+                    if (!floorNoted) {
+                        log.info(
+                            `${register}: page ${page} is fully known but a previous run left undelivered records at or below ${backlogFloor} - walking on until the watermark is reached.`,
+                        );
+                        floorNoted = true;
+                    }
+                } else {
+                    log.info(
+                        `${register}: delta early-stop at page ${page} - ${CONSECUTIVE_KNOWN_PAGES_TO_STOP} consecutive pages with no unseen record${backlogFloor !== null ? ` (watermark ${backlogFloor} reached)` : ''}.`,
+                    );
+                    return done('delta-early-stop', page, totalMatching);
+                }
             }
         }
         if (listing.totalPages !== null && page >= listing.totalPages)
             return done('no-more-pages', page, totalMatching);
         if (page >= PAGE_CAP) {
             log.warning(`Page cap (${PAGE_CAP}) reached - stopping the walk.`);
-            return done('page-cap', page, totalMatching, true);
+            return done('page-cap', page, totalMatching, true, lowestRecordId(listing.rows.map((r) => r.id)));
         }
         page += 1;
     }
@@ -380,36 +430,39 @@ export interface RecheckResult {
 
 /**
  * Outage guard. The site's answer for an unknown id is the generic IIS 500
- * page, so a server hiccup looks exactly like a withdrawn record. A single
- * missing record is plausible; a large share of listed / recently delivered
- * records disappearing in one run is not - that is the site failing, and
- * the run must fail with it rather than quietly closing or stubbing them.
- * Applied to any sample of at least MIN_SAMPLE detail fetches (ratio), and
- * to a streak of consecutive misses in delivery order.
+ * page, so a server hiccup looks exactly like a withdrawn record - and a
+ * timeout after the retries or a non-record page (maintenance, block) is
+ * no more conclusive. A single unreadable record is plausible; a large
+ * share of listed / recently delivered records failing in one run is not -
+ * that is the site failing, and the run must fail with it rather than
+ * quietly closing or stubbing them. Applied to any sample of at least
+ * MIN_SAMPLE detail fetches (ratio), and to a streak of consecutive
+ * failures in delivery order. Every detail failure counts (NOT_FOUND,
+ * NOT_A_DETAIL_PAGE, timeout / network error).
  */
 export const NOT_FOUND_GUARD = { ratio: 0.3, minSample: 10, maxConsecutive: 5 };
 
 export function assertNotFoundWithinBounds(
     register: DatasetName,
     attempted: number,
-    notFound: number,
+    failed: number,
     consecutive: number,
     context: string,
 ): void {
-    const tooMany = attempted >= NOT_FOUND_GUARD.minSample && notFound / attempted >= NOT_FOUND_GUARD.ratio;
+    const tooMany = attempted >= NOT_FOUND_GUARD.minSample && failed / attempted >= NOT_FOUND_GUARD.ratio;
     const streak = consecutive >= NOT_FOUND_GUARD.maxConsecutive;
     if (!tooMany && !streak) return;
     throw new Error(
-        `HSE ${register} ${context}: ${notFound} of ${attempted} record page(s) answered the site's "unknown id" 500 (${consecutive} in a row) although the register lists them - treating this as a site outage, not as withdrawals. Aborting so no record is stubbed or dropped; the next run retries.`,
+        `HSE ${register} ${context}: ${failed} of ${attempted} record page(s) could not be read (${consecutive} in a row: the site's "unknown id" 500, a timeout or a non-record page) although the register lists them - treating this as a site outage, not as withdrawals. Aborting so no record is stubbed or dropped; the next run retries.`,
     );
 }
 
-/** Longest streak of consecutive NOT_FOUND results, in order. */
+/** Longest streak of consecutive detail failures (any non-null error), in order. */
 export function longestNotFoundStreak(errors: readonly (string | null)[]): number {
     let streak = 0;
     let longest = 0;
     for (const e of errors) {
-        streak = e === 'NOT_FOUND' ? streak + 1 : 0;
+        streak = e !== null ? streak + 1 : 0;
         longest = Math.max(longest, streak);
     }
     return longest;
@@ -427,7 +480,7 @@ export async function recheckKnown(
     assertNotFoundWithinBounds(
         register,
         ids.length,
-        details.filter((d) => d.error === 'NOT_FOUND').length,
+        details.filter((d) => d.error !== null).length,
         longestNotFoundStreak(details.map((d) => d.error)),
         're-check of known open records',
     );

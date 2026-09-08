@@ -26,6 +26,8 @@ let pushed: Record<string, unknown>[] = [];
 let pushEvents: string[] = [];
 let failMessage: string | null = null;
 const missingIds = new Set<string>();
+/** Case ids whose page times out (after the retries) instead of answering. */
+const timeoutIds = new Set<string>();
 const input: Record<string, unknown> = {
     datasets: ['convictions'],
     maxItemsPerDataset: 3,
@@ -75,6 +77,9 @@ vi.mock('../src/http.js', async (importOriginal) => ({
     fetchWithRetry: async (path: string) => (path.includes('PN=1') ? LISTING_PAGE1 : PAST_END),
     fetchOptional: async (path: string) => {
         const id = path.match(/SV=(\d+)/)?.[1] ?? '';
+        if (timeoutIds.has(id) && path.includes('case_details.asp')) {
+            throw new Error('The operation was aborted due to timeout');
+        }
         if (path.includes('breach_list.asp')) return missingIds.has(id) ? null : BREACH_LIST;
         if (path.includes('breach_details.asp')) return BREACH_PAGE;
         return missingIds.has(id) ? null : CASE_PAGE;
@@ -193,5 +198,27 @@ describe('main.ts missing-detail policy (HTTP 500 = unknown id OR outage)', () =
         expect(day8.pushed).toEqual([]);
         expect(JSON.stringify(kv.get('state'))).toBe(before);
         missingIds.clear();
+    });
+
+    it('a timeout after the retries is as inconclusive as the 500: the record is held back, never stubbed-and-forgotten', async () => {
+        input.resetState = true;
+        input.recheckDays = 0;
+        input.maxItemsPerDataset = 3;
+        timeoutIds.add(HELD);
+        const day9 = await runOn('2026-09-15');
+        expect(failMessage).toBeNull();
+        expect(day9.pushed.map((r) => r.caseNumber)).toEqual([SECOND, NEWEST]);
+        expect(day9.state.seen.convictions[HELD]).toBeUndefined(); // NOT marked seen with h=null
+        expect(day9.state.missing.convictions[HELD]).toEqual({ n: 1, l: '2026-09-15' });
+        expect(day9.output.deferredMissingDetail.convictions).toBe(1);
+
+        // Once the page reads again the record is delivered with full detail.
+        timeoutIds.clear();
+        input.resetState = false;
+        const day10 = await runOn('2026-09-16');
+        const recovered = day10.pushed.find((r) => r.caseNumber === HELD);
+        expect(recovered).toMatchObject({ detailFetched: true, detailError: null });
+        expect(day10.state.seen.convictions[HELD].h).toMatch(/^[0-9a-f]{16}$/);
+        expect(day10.state.missing.convictions[HELD]).toBeUndefined();
     });
 });

@@ -6,7 +6,7 @@ import { recheckKnown, selectRecheckIds, walkListing } from './fetchRecords.js';
 import { setMaxInFlightRequests } from './http.js';
 import type { RunOptions } from './input.js';
 import { resolveInput } from './input.js';
-import { siteCalendarDate } from './normalize.js';
+import { lowestRecordId, siteCalendarDate } from './normalize.js';
 import type { DeltaState } from './state.js';
 import {
     clearMissing,
@@ -15,6 +15,7 @@ import {
     markSeen,
     MISSING_RUNS_BEFORE_CLOSED,
     saveState,
+    setBacklogFloor,
     stateStoreName,
 } from './state.js';
 import type { DatasetName, RegisterQuery } from './types.js';
@@ -29,9 +30,11 @@ interface RegisterOutcome {
     /** Known records that stopped being re-checked this run (missing in enough consecutive runs). */
     recheckClosed: number;
     delivered: number;
-    /** New records held back because their detail page was missing (retried next run). */
+    /** New records held back because their detail page could not be read (retried next run). */
     deferredMissingDetail: number;
     truncatedByMaxItems: boolean;
+    /** Walk watermark left for the next run (null = no backlog under the delivered records). */
+    backlogFloor: string | null;
 }
 
 async function processRegister(
@@ -43,21 +46,48 @@ async function processRegister(
     today: string,
 ): Promise<RegisterOutcome> {
     const seen = state.seen[register];
+    // The convictions register is ~210 records (21 pages) and its entry
+    // order is only a proxy for publication order, so it is always walked
+    // in full; notices (30k) early-stop after two fully-known pages - unless
+    // a walk watermark says a backlog is still waiting further down.
+    const fullWalk = register === 'convictions';
+    // A cold register (nothing known yet) delivers the newest records up to
+    // the cap as its baseline: what lies below the cap is deliberately never
+    // walked, so a capped cold walk sets no watermark. Any later capped walk
+    // does - its overflow is a backlog, not a baseline.
+    const cold = Object.keys(seen).length === 0;
+    const floorBefore = fullWalk ? null : state.backlogFloor[register];
     const walk = await walkListing({
         query,
         maxItems: options.maxItems,
         onlyNew: options.onlyNew,
         seen,
         eventTypes: options.eventTypes,
-        // The convictions register is ~210 records (21 pages) and its entry
-        // order is only a proxy for publication order, so it is always walked
-        // in full; notices (30k) early-stop after two fully-known pages.
-        fullWalk: register === 'convictions',
+        fullWalk,
+        backlogFloor: floorBefore,
     });
     const matched = walk.totalMatching !== null ? walk.totalMatching.toLocaleString('en-GB') : 'unknown';
     log.info(
         `${register} walk finished: ${walk.candidates.length} to deliver, ${walk.excluded.length} excluded, ${walk.pagesWalked} page(s), stop=${walk.stopReason}, ${matched} matching on HSE.`,
     );
+
+    // Walk watermark, part 1 (before anything is pushed): the backlog this
+    // run may leave behind is bounded above by the walk's stop point (when
+    // it was cut short) and by every candidate not stored yet - persist that
+    // now so a crash half-way through delivery cannot strand anything.
+    const walkIncomplete = walk.stopReason === 'max-items' || walk.stopReason === 'page-cap';
+    const backlogTops = (unstored: readonly string[]): (string | null)[] => [
+        ...unstored,
+        walkIncomplete && !cold ? walk.stoppedAtId : null,
+        walkIncomplete ? floorBefore : null,
+    ];
+    if (options.onlyNew && !fullWalk) {
+        const provisional = lowestRecordId(backlogTops(walk.candidates.map((c) => c.id)));
+        if (setBacklogFloor(state, register, provisional)) {
+            delivery.noteStateChanged();
+            await delivery.persist();
+        }
+    }
 
     let updated: Candidate[] = [];
     let rechecked = 0;
@@ -100,10 +130,27 @@ async function processRegister(
 
     // Deliver UPDATED first (they are re-detected on the next run if lost),
     // then new records OLDEST-FIRST: if the run dies half-way, the
-    // undelivered records are the newest ones - exactly the rows the next
-    // delta walk visits first - so nothing is ever skipped.
+    // undelivered records are the newest candidates - the rows the next
+    // delta walk visits first when they sit at the top of the register, and
+    // otherwise covered by the walk watermark persisted above.
     const queue: Candidate[] = [...updated, ...[...walk.candidates].reverse()];
     const delivered = await delivery.deliver(register, queue, options.maxItems);
+
+    // Walk watermark, part 2: only the candidates that were NOT stored are
+    // still a backlog. A completed walk whose candidates were all stored
+    // clears the floor; an incomplete one keeps the lower of its stop point
+    // and the previous floor (the older backlog was not reached).
+    if (options.onlyNew && !fullWalk) {
+        const floorAfter = lowestRecordId(backlogTops(delivered.unstoredNewIds));
+        if (setBacklogFloor(state, register, floorAfter)) delivery.noteStateChanged();
+        if (floorAfter !== null) {
+            log.warning(
+                `${register}: ${delivered.unstoredNewIds.length} candidate(s) not stored${walkIncomplete ? ' and the walk stopped at its cap' : ''} - walk watermark set to ${floorAfter}; the next delta run walks down to it.`,
+            );
+        } else if (floorBefore !== null) {
+            log.info(`${register}: backlog below ${floorBefore} cleared - walk watermark removed.`);
+        }
+    }
     return {
         walk,
         rechecked,
@@ -113,6 +160,7 @@ async function processRegister(
         delivered: delivered.count,
         deferredMissingDetail: delivered.deferredMissingDetail,
         truncatedByMaxItems: walk.truncatedByMaxItems || delivered.truncatedByMaxItems,
+        backlogFloor: state.backlogFloor[register],
     };
 }
 
@@ -156,7 +204,7 @@ async function run(): Promise<void> {
         today,
     });
     log.info(
-        `Delta state store: ${storeName} (${Object.keys(state.seen.convictions).length} known cases, ${Object.keys(state.seen.notices).length} known notices)`,
+        `Delta state store: ${storeName} (${Object.keys(state.seen.convictions).length} known cases, ${Object.keys(state.seen.notices).length} known notices, notices walk watermark ${state.backlogFloor.notices ?? 'none'})`,
     );
 
     const delivery = new Delivery(state, storeName, runAt, options, now);
@@ -203,6 +251,7 @@ async function run(): Promise<void> {
         recheckVanished: mapOutcomes(outcomes, (o) => o.recheckVanished),
         recheckClosed: mapOutcomes(outcomes, (o) => o.recheckClosed),
         deferredMissingDetail: mapOutcomes(outcomes, (o) => o.deferredMissingDetail),
+        backlogFloor: mapOutcomes(outcomes, (o) => o.backlogFloor),
         truncatedByMaxItems: Object.values(outcomes).some((o) => o?.truncatedByMaxItems === true),
         chargeLimitReached: delivery.chargeLimitReached,
         excluded: countBy(

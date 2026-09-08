@@ -283,3 +283,29 @@ export function sanitizeFreeText(value: string): string {
         .replace(/\s+/g, ' ')
         .trim();
 }
+
+/**
+ * Orders register ids (case / notice numbers) the way the site's entry-order
+ * sort does: numerically. Both registers use plain decimal ids, but a
+ * non-numeric id falls back to a string comparison rather than NaN.
+ */
+export function compareRecordIds(a: string, b: string): number {
+    const numeric = /^\d+$/.test(a) && /^\d+$/.test(b);
+    if (numeric) {
+        const ta = a.replace(/^0+(?=\d)/, '');
+        const tb = b.replace(/^0+(?=\d)/, '');
+        if (ta.length !== tb.length) return ta.length - tb.length;
+        return ta.localeCompare(tb, 'en');
+    }
+    return a.localeCompare(b, 'en');
+}
+
+/** The lowest id of a set (null for an empty set) - the top of a coverage gap in a newest-first walk. */
+export function lowestRecordId(ids: readonly (string | null | undefined)[]): string | null {
+    let lowest: string | null = null;
+    for (const id of ids) {
+        if (!id) continue;
+        if (lowest === null || compareRecordIds(id, lowest) < 0) lowest = id;
+    }
+    return lowest;
+}

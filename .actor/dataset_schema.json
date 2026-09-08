@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "actorSpecification": 1,
     "title": "UK HSE enforcement records",
-    "description": "One item per conviction (recordType 'conviction') or enforcement notice (recordType 'notice') from the HSE public registers. Raw site strings are kept verbatim next to normalised siblings (ISO dates, numeric GBP, postcode, SIC code, booleans) so the data drops straight into a warehouse, CRM or spreadsheet. Records are appended oldest-first within a run; read newest-first with ?desc=true.",
+    "description": "One item per conviction (recordType 'conviction') or enforcement notice (recordType 'notice') from the HSE public registers. Raw site strings are kept verbatim next to normalised siblings (ISO dates, numeric GBP, postcode, SIC code, booleans) so the data drops straight into a warehouse, CRM or spreadsheet. Within a run, UPDATED events are appended first, then new records oldest-first; read newest-first with ?desc=true.",
     "fields": {
         "type": "object",
         "additionalProperties": true,

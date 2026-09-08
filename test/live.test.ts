@@ -192,6 +192,20 @@ describe.skipIf(!process.env.LIVE)('live HSE register integration', () => {
         expect(byText.walk.totalMatching).toBeGreaterThanOrEqual(byCode.walk.totalMatching);
     }, 120_000);
 
+    it('the SIC column is a SUBSTRING match: a short digit string over-matches (documented, warned about)', async () => {
+        const count = async (value: string) =>
+            (await run('notices', { mainActivityContains: value, fetchDetail: false, maxItemsPerDataset: 10 })).walk
+                .totalMatching ?? 0;
+        const exact = await count('25620'); // MACHINING
+        const group = await count('2562');
+        const substring = await count('562'); // 25620 + every code containing "562" (e.g. 15620, 56210)
+        expect(exact).toBeGreaterThan(100);
+        expect(group).toBeGreaterThanOrEqual(exact);
+        expect(substring).toBeGreaterThan(group);
+        const short = await run('notices', { mainActivityContains: '562', fetchDetail: false, maxItemsPerDataset: 10 });
+        expect(short.records.some((r) => /MACHINING/i.test(r.mainActivity ?? ''))).toBe(true);
+    }, 120_000);
+
     it('a zero-result query ends cleanly instead of being mistaken for a block', async () => {
         const { records, walk } = await run('notices', { nameContains: 'zzzzqqqqxxxx', fetchDetail: false });
         expect(records).toEqual([]);

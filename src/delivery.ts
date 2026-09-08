@@ -22,8 +22,14 @@ export const PERSIST_EVERY_N_DELIVERED = 50;
 export interface DeliveryOutcome {
     count: number;
     truncatedByMaxItems: boolean;
-    /** New records whose detail page was missing this run and were held back (delta mode) instead of stubbed. */
+    /** New records whose detail page could not be read this run and were held back (delta mode) instead of stubbed. */
     deferredMissingDetail: number;
+    /**
+     * Ids of NEW candidates that were not stored (delivery cap, spending
+     * limit, held back): they are still unseen and sit under the records
+     * stored today, so main.ts records them in the walk watermark.
+     */
+    unstoredNewIds: string[];
 }
 
 /**
@@ -60,6 +66,7 @@ export class Delivery {
         let deferredMissingDetail = 0;
         let consecutiveNotFound = 0;
         const droppedByEventType: string[] = [];
+        const storedIds = new Set<string>();
         for (let offset = 0; offset < queue.length && !this.chargeLimitReached; offset += DELIVERY_BATCH_SIZE) {
             const room = maxItems - count;
             if (room <= 0) {
@@ -78,24 +85,25 @@ export class Delivery {
                 now: this.now,
             });
 
-            // Outage guard: too many listed records answering the "unknown id"
-            // 500 at once is the site failing, not a wave of withdrawals.
+            // Outage guard: too many listed records failing to read at once
+            // (the "unknown id" 500, timeouts, non-record pages) is the site
+            // failing, not a wave of withdrawals.
             if (this.options.fetchDetail) {
                 let attempted = 0;
-                let notFound = 0;
+                let failed = 0;
                 let longestStreak = 0;
                 for (let i = 0; i < built.length; i++) {
                     if (batch[i].detail !== null) continue; // UPDATED candidates arrive with their page
                     attempted += 1;
-                    if (built[i].record.detailError === 'NOT_FOUND') {
-                        notFound += 1;
+                    if (!built[i].record.detailFetched) {
+                        failed += 1;
                         consecutiveNotFound += 1; // carried across batches
                         longestStreak = Math.max(longestStreak, consecutiveNotFound);
                     } else {
                         consecutiveNotFound = 0;
                     }
                 }
-                assertNotFoundWithinBounds(register, attempted, notFound, longestStreak, 'detail fetch');
+                assertNotFoundWithinBounds(register, attempted, failed, longestStreak, 'detail fetch');
             }
 
             // Charge the full price only for records that really carry breach detail.
@@ -106,27 +114,31 @@ export class Delivery {
             for (let i = 0; i < built.length; i++) {
                 const b = built[i];
                 const candidate = batch[i];
-                if (this.options.fetchDetail && b.record.detailError === 'NOT_FOUND' && this.options.onlyNew) {
-                    // A missing page is only "withdrawn" once it has been missing
-                    // in several runs; until then the record is neither stored
-                    // nor remembered, so the next run simply retries it.
+                if (this.options.fetchDetail && !b.record.detailFetched && this.options.onlyNew) {
+                    // An unreadable page - the "unknown id" 500, a timeout after
+                    // the retries, a non-record page - is only "withdrawn" once
+                    // it has failed in several runs; until then the record is
+                    // neither stored nor remembered (a stub with no hash would
+                    // never be re-read), so the next run simply retries it.
                     const runs = markMissing(this.state, register, candidate.id, today);
                     this.dirty = true;
+                    const why = b.record.detailError ?? 'unknown error';
                     if (runs < MISSING_RUNS_BEFORE_STUB) {
                         deferredMissingDetail += 1;
                         log.warning(
-                            `${register} ${candidate.id}: detail page not found (run ${runs}/${MISSING_RUNS_BEFORE_STUB}) - held back for the next run instead of being delivered without detail.`,
+                            `${register} ${candidate.id}: detail page could not be read (${why}; run ${runs}/${MISSING_RUNS_BEFORE_STUB}) - held back for the next run instead of being delivered without detail.`,
                         );
                         continue;
                     }
                     log.warning(
-                        `${register} ${candidate.id}: detail page missing in ${runs} runs - delivering the listing-only record and treating it as withdrawn.`,
+                        `${register} ${candidate.id}: detail page unreadable in ${runs} runs (${why}) - delivering the listing-only record and treating it as withdrawn.`,
                     );
                 }
                 if (!this.options.eventTypes.has(b.record.event_type)) {
                     droppedByEventType.push(candidate.id);
                     markSeen(this.state, register, candidate.id, b.stateEntry, today);
                     clearMissing(this.state, register, candidate.id);
+                    storedIds.add(candidate.id);
                     this.dirty = true;
                     continue;
                 }
@@ -148,6 +160,7 @@ export class Delivery {
                     this.records.push(b.record);
                     markSeen(this.state, register, candidate.id, b.stateEntry, today);
                     clearMissing(this.state, register, candidate.id);
+                    storedIds.add(candidate.id);
                     this.dirty = true;
                     this.sinceLastPersist += 1;
                     count += 1;
@@ -167,10 +180,16 @@ export class Delivery {
         }
         if (deferredMissingDetail > 0) {
             log.warning(
-                `${register}: ${deferredMissingDetail} record(s) whose detail page was missing were held back for a later run.`,
+                `${register}: ${deferredMissingDetail} record(s) whose detail page could not be read were held back for a later run.`,
             );
         }
-        return { count, truncatedByMaxItems, deferredMissingDetail };
+        const unstoredNewIds = queue.filter((c) => c.isNew && !storedIds.has(c.id)).map((c) => c.id);
+        return { count, truncatedByMaxItems, deferredMissingDetail, unstoredNewIds };
+    }
+
+    /** The caller changed the shared state outside a push (walk watermark): include it in the next persist. */
+    noteStateChanged(): void {
+        this.dirty = true;
     }
 
     async persist(): Promise<void> {

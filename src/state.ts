@@ -50,6 +50,16 @@ export interface DeltaState {
     seen: Record<DatasetName, Record<string, StateEntry>>;
     /** Records currently deferred / suspected withdrawn (not part of the seen-set). */
     missing: Record<DatasetName, Record<string, MissingEntry>>;
+    /**
+     * Walk watermark per register: the highest id at or below which
+     * UNDELIVERED matching records may still exist - the id where a capped
+     * walk stopped, or the lowest candidate a run did not store (spending
+     * limit, delivery cap, held-back detail, crash). While it is set the
+     * delta walk must not early-stop on known pages above it, otherwise the
+     * records already delivered would hide the backlog underneath them.
+     * Null once a walk completed with everything stored.
+     */
+    backlogFloor: Record<DatasetName, string | null>;
     lastRunAt: string | null;
     filtersSignature: string | null;
 }
@@ -71,6 +81,7 @@ export function emptyState(filtersSignature: string | null): DeltaState {
         version: 2,
         seen: { convictions: {}, notices: {} },
         missing: { convictions: {}, notices: {} },
+        backlogFloor: { convictions: null, notices: null },
         lastRunAt: null,
         filtersSignature,
     };
@@ -128,6 +139,12 @@ export async function loadState(storeName: string, options: LoadStateOptions): P
         stored.missing ??= { convictions: {}, notices: {} };
         stored.missing.convictions ??= {};
         stored.missing.notices ??= {};
+        // A store written before the watermark existed may hide a backlog
+        // under its delivered records; there is no way to know, so start
+        // with no floor (same behaviour as before) rather than a full walk.
+        stored.backlogFloor ??= { convictions: null, notices: null };
+        stored.backlogFloor.convictions ??= null;
+        stored.backlogFloor.notices ??= null;
         return stored;
     }
     if (adoptLegacy) {
@@ -173,6 +190,13 @@ export function markMissing(state: DeltaState, register: DatasetName, id: string
     const n = (previous?.n ?? 0) + 1;
     state.missing[register][id] = { n, l: today };
     return n;
+}
+
+/** Sets (or clears, with null) a register's walk watermark. Returns true when it changed. */
+export function setBacklogFloor(state: DeltaState, register: DatasetName, floor: string | null): boolean {
+    if (state.backlogFloor[register] === floor) return false;
+    state.backlogFloor[register] = floor;
+    return true;
 }
 
 /** The record's page was read again (or it was delivered): forget its missing history. */

@@ -114,6 +114,7 @@ describe('walkListing against real captured fixtures', () => {
         expect(result.candidates.length).toBe(5);
         expect(result.truncatedByMaxItems).toBe(true);
         expect(result.stopReason).toBe('max-items');
+        expect(result.stoppedAtId).toBe(convP1Ids[5]); // the first row NOT taken
         expect(fetchWithRetryMock).toHaveBeenCalledTimes(1);
     });
 
@@ -200,6 +201,114 @@ describe('walkListing against real captured fixtures', () => {
     });
 });
 
+// Synthetic notice pages: the real DNN page-1 capture with its 10 notice
+// numbers replaced, so several distinct pages in entry order can be served.
+function noticePage(ids: readonly string[]): string {
+    if (ids.length !== notP1Ids.length) throw new Error('need exactly 10 ids');
+    let html = NOT_DNN_P1;
+    notP1Ids.forEach((old, i) => {
+        html = html.replaceAll(old, ids[i]);
+    });
+    return html;
+}
+/** Ten descending notice numbers starting at `top` (walk order = newest first). */
+function tenIdsFrom(top: number): string[] {
+    return Array.from({ length: 10 }, (_v, i) => String(top - i));
+}
+
+describe('walk watermark (backlogFloor): a capped delta walk never strands the overflow', () => {
+    // Register in entry order: 30 new notices on three pages, then a page of
+    // notices delivered by an earlier run (the baseline), then the end.
+    // (numbering leaves a gap between the new block and the baseline, like real entries do)
+    const NEW_P1 = tenIdsFrom(916000230);
+    const NEW_P2 = tenIdsFrom(916000220);
+    const NEW_P3 = tenIdsFrom(916000210);
+    const BASELINE = tenIdsFrom(916000100);
+    const OLDER = tenIdsFrom(916000090);
+    const pages = [NEW_P1, NEW_P2, NEW_P3, BASELINE, OLDER].map(noticePage);
+    const seenBaseline = (): Record<string, StateEntry> => {
+        const seen: Record<string, StateEntry> = {};
+        for (const id of [...BASELINE, ...OLDER]) seen[id] = entry();
+        return seen;
+    };
+
+    beforeEach(() => {
+        fetchWithRetryMock.mockReset();
+        fetchOptionalMock.mockReset();
+        servePages(...pages, NOT_PAST_END);
+    });
+
+    it('run 1: maxItems=20 takes the 20 newest, reports the first record it did NOT take as the stop id', async () => {
+        const run1 = await walk(NOT, { onlyNew: true, seen: seenBaseline(), fullWalk: false, maxItems: 20 });
+        expect(run1.stopReason).toBe('max-items');
+        expect(run1.truncatedByMaxItems).toBe(true);
+        expect(run1.candidates.map((c) => c.id)).toEqual([...NEW_P1, ...NEW_P2]);
+        expect(run1.stoppedAtId).toBe(NEW_P3[0]);
+        expect(run1.pagesWalked).toBe(3);
+    });
+
+    it('run 2 WITHOUT a watermark reproduces the defect: two known pages early-stop above the 10 stranded records', async () => {
+        const seen = seenBaseline();
+        for (const id of [...NEW_P1, ...NEW_P2]) seen[id] = entry();
+        const run2 = await walk(NOT, { onlyNew: true, seen, fullWalk: false, maxItems: 20 });
+        expect(run2.stopReason).toBe('delta-early-stop');
+        expect(run2.pagesWalked).toBe(2);
+        expect(run2.candidates).toEqual([]); // NEW_P3 is never reached
+    });
+
+    it('run 2 WITH the watermark walks past the known pages down to the stop id and delivers the overflow', async () => {
+        const seen = seenBaseline();
+        for (const id of [...NEW_P1, ...NEW_P2]) seen[id] = entry();
+        const run2 = await walk(NOT, {
+            onlyNew: true,
+            seen,
+            fullWalk: false,
+            maxItems: 20,
+            backlogFloor: NEW_P3[0],
+        });
+        expect(run2.candidates.map((c) => c.id)).toEqual(NEW_P3);
+        // Page 3 held the backlog; pages 4 and 5 are known and lie below the floor -> normal early-stop.
+        expect(run2.stopReason).toBe('delta-early-stop');
+        expect(run2.pagesWalked).toBe(5);
+        expect(run2.stoppedAtId).toBeNull();
+        expect(fetchWithRetryMock).toHaveBeenCalledTimes(5);
+    });
+
+    it('a watermark that sits on an already-walked page does not delay the early-stop', async () => {
+        const seen = seenBaseline();
+        for (const id of [...NEW_P1, ...NEW_P2, ...NEW_P3]) seen[id] = entry();
+        const run = await walk(NOT, { onlyNew: true, seen, fullWalk: false, backlogFloor: NEW_P2[5] });
+        expect(run.candidates).toEqual([]);
+        expect(run.stopReason).toBe('delta-early-stop');
+        expect(run.pagesWalked).toBe(2);
+    });
+
+    it('a watermark whose backlog was withdrawn from the register still ends the walk once the floor is passed', async () => {
+        const seen = seenBaseline();
+        for (const id of [...NEW_P1, ...NEW_P2, ...NEW_P3]) seen[id] = entry();
+        // The floor points at a notice number that no longer exists between pages 3 and 4.
+        const run = await walk(NOT, { onlyNew: true, seen, fullWalk: false, backlogFloor: '916000150' });
+        expect(run.candidates).toEqual([]);
+        expect(run.stopReason).toBe('delta-early-stop');
+        expect(run.pagesWalked).toBe(4); // pages 1-3 known but above the floor; page 4 reaches below it
+    });
+
+    it('the floor only defers the stop - a cap hit again inside the backlog reports the new, lower stop id', async () => {
+        const seen = seenBaseline();
+        for (const id of [...NEW_P1, ...NEW_P2]) seen[id] = entry();
+        const run = await walk(NOT, {
+            onlyNew: true,
+            seen,
+            fullWalk: false,
+            maxItems: 4,
+            backlogFloor: NEW_P3[0],
+        });
+        expect(run.candidates.map((c) => c.id)).toEqual(NEW_P3.slice(0, 4));
+        expect(run.stopReason).toBe('max-items');
+        expect(run.stoppedAtId).toBe(NEW_P3[4]);
+    });
+});
+
 describe('UPDATED detection through content hashes (the register has no timestamps)', () => {
     beforeEach(() => {
         fetchWithRetryMock.mockReset();
@@ -255,6 +364,26 @@ describe('UPDATED detection through content hashes (the register has no timestam
         expect(() => assertNotFoundWithinBounds('notices', 5, 5, 5, 'x')).toThrow(/5 in a row/);
         expect(() => assertNotFoundWithinBounds('notices', 4, 4, 4, 'x')).not.toThrow();
         expect(longestNotFoundStreak(['NOT_FOUND', 'NOT_FOUND', null, 'NOT_FOUND'])).toBe(2);
+        // A timeout or a non-record page is as inconclusive as the 500 and counts the same.
+        expect(longestNotFoundStreak(['NOT_FOUND', 'timeout', 'NOT_A_DETAIL_PAGE', null])).toBe(3);
+    });
+
+    it('re-check counts timeouts and non-record pages in the outage guard, and keeps such records re-checkable', async () => {
+        const seen: Record<string, StateEntry> = {};
+        const ids = Array.from({ length: 10 }, (_v, i) => String(316000100 + i));
+        for (const id of ids) seen[id] = entry();
+        fetchOptionalMock.mockRejectedValue(new Error('The operation was aborted due to timeout'));
+        await expect(recheckKnown('notices', ids, seen, 3)).rejects.toThrow(/site outage/);
+        // One timeout among many: neither an update nor a withdrawal - just "could not be read".
+        const complied = fx('notice_detail_315474881_complied.html');
+        fetchOptionalMock.mockImplementation(async (path) => {
+            if (path.includes(`SV=${ids[0]}`)) throw new Error('timeout');
+            return complied;
+        });
+        const result = await recheckKnown('notices', ids, seen, 3);
+        expect(result.failed).toBe(1);
+        expect(result.vanished).toEqual([]);
+        expect(result.readIds).not.toContain(ids[0]);
     });
 
     it('the conviction hash covers the per-case breach list, so an appended hearing is an update', async () => {

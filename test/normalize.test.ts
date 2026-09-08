@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     addDays,
+    compareRecordIds,
     classifyBreachResult,
     classifyNoticeType,
     classifyPartyStatus,
@@ -10,6 +11,7 @@ import {
     extractCountry,
     extractNoticeItemIds,
     extractPostcode,
+    lowestRecordId,
     isOpenNoticeResult,
     isoToSiteDate,
     parseActReference,
@@ -183,5 +185,21 @@ describe('hashing and sanitising', () => {
         expect(sanitizeFreeText('A+E Drainage')).toBe('A_E Drainage');
         expect(sanitizeFreeText('  Skanska,  Costain ')).toBe('Skanska, Costain');
         expect(sanitizeFreeText('a;b|c')).toBe('a b c');
+    });
+});
+
+describe('record id ordering (walk watermark)', () => {
+    it('orders case / notice numbers numerically, not lexically', () => {
+        expect(compareRecordIds('316153979', '316149757')).toBeGreaterThan(0);
+        expect(compareRecordIds('4883993', '316153979')).toBeLessThan(0); // 7-digit case < 9-digit notice
+        expect(compareRecordIds('99', '100')).toBeLessThan(0);
+        expect(compareRecordIds('0100', '100')).toBe(0);
+        expect(compareRecordIds('abc', 'abd')).toBeLessThan(0);
+    });
+
+    it('lowestRecordId picks the lowest id and ignores empty values', () => {
+        expect(lowestRecordId(['316153979', null, '316149757', undefined, '316137324'])).toBe('316137324');
+        expect(lowestRecordId([])).toBeNull();
+        expect(lowestRecordId([null, undefined])).toBeNull();
     });
 });

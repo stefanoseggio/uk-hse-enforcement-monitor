@@ -139,8 +139,16 @@ interface ResolvedFilters {
     act: string | null;
 }
 
-/** A SIC 2007 code or a prefix of one (division 2 digits ... subclass 5 digits). */
+/**
+ * A SIC 2007 code (5 digits) or a shorter digit string routed to the site's
+ * numeric SIC column. The column's LIKE is a SUBSTRING match (verified live
+ * 2026-09-07: `SIC LIKE '562'` -> 932 notices, page 1 all MACHINING /
+ * 25620, versus `'2562'` -> 911), so only 4-5 digit values select what a
+ * user means; 2-3 digits over-match and get a warning (see below).
+ */
 export const SIC_CODE_RE = /^\d{2,5}$/;
+/** Digit lengths that behave like "the code starts with these digits" in practice. */
+const SIC_PRECISE_MIN_DIGITS = 4;
 
 /**
  * Column codes per register - all verified live with result counts on
@@ -164,12 +172,20 @@ function criteriaFor(register: DatasetName, f: ResolvedFilters): Criterion[] {
     like(isConv ? 'LA' : 'NLAC', f.localAuthorityContains);
     // Two different columns on the site (verified live 2026-09-07): `SICD`
     // is the activity DESCRIPTION text only ("MACHINING" -> 911 notices,
-    // "25620" -> 0), `SIC` is the numeric code ("25620" -> 911, prefix "2562"
-    // -> 911 with LIKE; "38320" -> 4 convictions). A numeric value is
-    // therefore sent to SIC (LIKE, so a 2-4 digit prefix selects a whole
-    // division/group), anything else to SICD.
+    // "25620" -> 0), `SIC` is the numeric code ("25620" -> 911; "38320" -> 4
+    // convictions). Its LIKE is a substring match - "2562" -> 911 (the
+    // 25620 class) but "562" -> 932 (25620 plus every code containing 562)
+    // and "43" -> 2,794 (14310, 24310, 46430 ... as well as 43xxx) - so a
+    // numeric value is sent to SIC and a 2-3 digit one is flagged: the site
+    // cannot select a SIC division; `industry` is the broad filter.
     if (f.mainActivityContains) {
-        like(SIC_CODE_RE.test(f.mainActivityContains) ? 'SIC' : 'SICD', f.mainActivityContains);
+        const isCode = SIC_CODE_RE.test(f.mainActivityContains);
+        if (isCode && f.mainActivityContains.length < SIC_PRECISE_MIN_DIGITS) {
+            log.warning(
+                `mainActivityContains="${f.mainActivityContains}": the register matches SIC codes CONTAINING these digits anywhere, not codes starting with them - expect records from unrelated classes (and charges for them). Use a full 5-digit code, a 4-digit group, or the industry filter for a broad selection.`,
+            );
+        }
+        like(isCode ? 'SIC' : 'SICD', f.mainActivityContains);
     }
     pick('UKR', f.region);
     pick('CTR', f.country);

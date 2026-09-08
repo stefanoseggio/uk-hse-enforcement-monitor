@@ -41,7 +41,7 @@
         "mainActivityContains": {
             "title": "Main activity (SIC code or text)",
             "type": "string",
-            "description": "A numeric value (2-5 digits) matches the SIC code of the offence location, prefix included ('43910' = roofing activities, '43' = all specialised construction); any other text matches the activity description ('ROOFING', 'MACHINING'). The site keeps the two in different columns, so a code never matches as text and vice versa.",
+            "description": "A numeric value matches the SIC 2007 code of the offence location; any other text matches the activity description ('ROOFING', 'MACHINING'). The site keeps the two in different columns, so a code never matches as text and vice versa. The code match is a CONTAINS match on the register: use a full 5-digit code for one class ('43910' = roofing) or a 4-digit group ('4391'); 2-3 digit values also match every code that merely contains those digits ('43' returns 14310, 24310, 46430 ...) - use the industry filter for broad selections.",
             "editor": "textfield"
         },
         "region": {
@@ -352,7 +352,7 @@
             "sectionCaption": "Limits & performance",
             "title": "Max records per register",
             "type": "integer",
-            "description": "Hard cap on delivered records per selected register (and therefore on cost: you pay per record). In delta mode anything beyond the cap is simply delivered by the next run.",
+            "description": "Hard cap on delivered records per selected register (and therefore on cost: you pay per record). In delta mode the overflow is delivered by the following runs: the walk remembers where it stopped (a per-register watermark in the delta memory) and the next run walks down to that point instead of stopping at the records already delivered. On the very first delta run the cap defines the baseline - older records below it are not delivered later.",
             "editor": "number",
             "default": 100,
             "minimum": 1,
