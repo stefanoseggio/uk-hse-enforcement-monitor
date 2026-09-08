@@ -11,9 +11,6 @@ import type { DatasetName } from './types.js';
 const STORE_PREFIX = 'uk-hse-enforcement-monitor-state';
 const STATE_KEY = 'state';
 
-/** v1 wrote one unfiltered store under this name; adopted only for an unfiltered v2 run (see loadState). */
-export const LEGACY_STORE_NAME = 'uk-hse-enforcement-monitor-delta-state';
-
 // The notices register holds ~30k records over its whole 10-year retention
 // and convictions ~210, so 50,000 entries per register never prunes in
 // practice; the serialised JSON stays around 4 MB, well within a KV record.
@@ -80,11 +77,6 @@ export const MISSING_RUNS_BEFORE_CLOSED = 2;
 /** Bound on the missing map per register (oldest dropped first). */
 export const MAX_MISSING_ENTRIES = 5_000;
 
-interface LegacyState {
-    seenIds?: Partial<Record<DatasetName, string[]>>;
-    lastRunAt?: Partial<Record<DatasetName, string>>;
-}
-
 export function emptyState(filtersSignature: string | null): DeltaState {
     return {
         version: 2,
@@ -110,28 +102,14 @@ function isV2(value: unknown): value is DeltaState {
     return !!value && (value as DeltaState).version === 2 && typeof (value as DeltaState).seen === 'object';
 }
 
-function fromLegacy(legacy: LegacyState, filtersSignature: string | null, today: string): DeltaState {
-    const state = emptyState(filtersSignature);
-    for (const register of ['convictions', 'notices'] as const) {
-        for (const id of legacy.seenIds?.[register] ?? []) {
-            // No hash is known for v1 deliveries: they are a baseline, never re-checked for UPDATED.
-            state.seen[register][id] = { h: null, d: null, o: false, f: today, l: today };
-        }
-    }
-    state.lastRunAt = legacy.lastRunAt?.notices ?? legacy.lastRunAt?.convictions ?? null;
-    return state;
-}
-
 export interface LoadStateOptions {
     filtersSignature: string;
     reset: boolean;
-    /** Only an unfiltered run may inherit the v1 store, which was written regardless of filters. */
-    adoptLegacy: boolean;
     today: string;
 }
 
 export async function loadState(storeName: string, options: LoadStateOptions): Promise<DeltaState> {
-    const { filtersSignature, reset, adoptLegacy, today } = options;
+    const { filtersSignature, reset } = options;
     if (reset) {
         log.info(`resetState=true - starting from an empty seen-set in store "${storeName}".`);
         return emptyState(filtersSignature);
@@ -162,17 +140,11 @@ export async function loadState(storeName: string, options: LoadStateOptions): P
         stored.baselineFloor.notices ??= null;
         return stored;
     }
-    if (adoptLegacy) {
-        const legacyStore = await Actor.openKeyValueStore(LEGACY_STORE_NAME);
-        const legacy = await legacyStore.getValue<LegacyState>(STATE_KEY);
-        if (legacy && legacy.seenIds) {
-            const count = Object.values(legacy.seenIds).reduce((n, ids) => n + (ids?.length ?? 0), 0);
-            log.info(
-                `Adopting the v1 delta store "${LEGACY_STORE_NAME}" (${count} known ids, no filters were set) into "${storeName}".`,
-            );
-            return fromLegacy(legacy, filtersSignature, today);
-        }
-    }
+    // The v1 store is deliberately NOT adopted, even for an unfiltered run: v1
+    // wrote it unconditionally, so inheriting it makes the first v2 run look
+    // warm (no baseline is set) and the register then drains cap-by-cap -
+    // observed on the platform on 2026-09-08. Every delta-state name starts
+    // from an empty memory; a cold run defines its baseline.
     return emptyState(filtersSignature);
 }
 

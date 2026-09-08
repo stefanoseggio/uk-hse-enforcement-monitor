@@ -235,7 +235,6 @@ async function run(): Promise<void> {
     const state = await loadState(storeName, {
         filtersSignature: resolved.filtersSignature,
         reset: options.resetState,
-        adoptLegacy: !resolved.hasFilters,
         today,
     });
     // Decided once, before anything is persisted (the run's own mid-way

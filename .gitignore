@@ -7,3 +7,6 @@ node_modules
 apify_storage
 storage
 .venv
+
+# personal go-to-market notes never belong in the actor source
+_gtm-*.md
