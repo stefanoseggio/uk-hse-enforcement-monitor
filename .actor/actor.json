@@ -1,21 +1,24 @@
 {
-    "$schema": "https://apify.com/schemas/v1/actor.ide.json",
-    "actorSpecification": 1,
-    "name": "uk-hse-enforcement-monitor",
-    "title": "UK HSE Enforcement Monitor - Prosecutions & Notices Scraper",
-    "description": "Scrape and monitor the UK Health and Safety Executive registers of convictions (prosecutions, fines, breaches, courts) and enforcement notices (Improvement, Prohibition). Filter by company name, region, industry, fine, notice type, dates. Delta mode with new and updated events. Pay per record.",
-    "version": "2.0",
-    "buildTag": "latest",
-    "minMemoryMbytes": 256,
-    "maxMemoryMbytes": 1024,
-    "meta": {
-        "templateId": "ts-crawlee-cheerio"
-    },
-    "inputSchema": "./input_schema.json",
-    "outputSchema": "./output_schema.json",
-    "storages": {
-        "dataset": "./dataset_schema.json"
-    },
-    "changelog": "../CHANGELOG.md",
-    "dockerfile": "../Dockerfile"
+  "$schema": "https://apify.com/schemas/v1/actor.ide.json",
+  "actorSpecification": 1,
+  "name": "uk-hse-enforcement-monitor",
+  "title": "UK HSE Convictions + Notices - Enforcement Delta API",
+  "description": "Track UK HSE enforcement action: prosecutions and fines from the register of convictions, plus Improvement and Prohibition notices. Filter by company name, region, industry, fine amount, notice type and date. Delta mode flags new and updated compliance risk. Pay per record, no proxy needed.",
+  "version": "2.0",
+  "buildTag": "latest",
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 1024,
+  "meta": {
+    "templateId": "ts-crawlee-cheerio"
+  },
+  "inputSchema": "./input_schema.json",
+  "outputSchema": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
+  "changelog": "../CHANGELOG.md",
+  "dockerfile": "../Dockerfile",
+  "categories": [
+    "BUSINESS"
+  ]
 }
