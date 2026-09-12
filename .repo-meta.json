@@ -1,0 +1,20 @@
+{
+  "oneLineDescription": "Monitors the UK HSE public registers of convictions and enforcement notices, delivering structured JSON/CSV/Excel records with delta alerts for new and updated compliance risk.",
+  "topics": [
+    "apify",
+    "apify-actor",
+    "compliance",
+    "health-and-safety",
+    "hse",
+    "typescript",
+    "uk-government",
+    "web-scraping",
+    "enforcement-notices",
+    "prosecutions",
+    "contractor-vetting",
+    "kyb",
+    "supply-chain-risk",
+    "regulatory-monitoring",
+    "pay-per-event"
+  ]
+}
