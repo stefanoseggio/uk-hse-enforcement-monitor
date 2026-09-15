@@ -115,6 +115,46 @@ A conviction record carries the same integrity envelope (`record_id`, `event_typ
 
 Delta mode (`onlyNew: true`) tracks state in a named, per-filter-set key-value store rather than trusting the register's own sort order, because the listings are sorted by offence/issue date, which lags publication by weeks to years. Each run walks the registers in entry order (case/notice number descending) - the whole ~210-record convictions register every time, the notices register until it meets two consecutive already-known pages - and remembers each stored record's page **content hash**, since the register has no "last updated" field of its own; a changed hash on a known open record (an Improvement Notice still "Ongoing", or any conviction, re-read for up to `recheckDays`) is delivered again as `UPDATED`. Memory is written only for records actually stored, and new records are delivered oldest-first, so a spending limit, timeout or platform migration mid-run never loses a record - the next run simply resumes. A first delta run establishes a persisted **baseline** (the oldest record it delivered); later capped runs leave a per-register **walk watermark** so the next run backfills any batch the cap cut short instead of silently skipping it. The state store holds up to 50,000 entries per register. Record pages that fail to load are never taken at face value: a new record is held back and retried across runs, only surfacing as a listing-only record after being missing on three separate days; if more than 30% of a batch (or 5 records in a row) go missing at once, the run fails outright as a site-outage signal instead of stubbing data.
 
+## Instant Terminal Run (cURL)
+
+Runs synchronously and returns the resulting dataset items directly in the response - no polling needed. Get your token from [console.apify.com/settings/integrations](https://console.apify.com/settings/integrations).
+
+```bash
+curl -X POST "https://api.apify.com/v2/acts/jV35qppM82fjyjsle/run-sync-get-dataset-items?token=<YOUR_API_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "datasets": [
+    "convictions",
+    "notices"
+  ],
+  "maxItemsPerDataset": 50,
+  "onlyNew": true
+}'
+```
+
+## Sample Extracted Dataset (JSON)
+
+One real record from this Actor's own dataset, matching `.actor/dataset_schema.json`:
+
+```json
+{
+  "record_id": "314719061",
+  "event_type": "NEW_LISTING",
+  "scraped_at": "2026-09-07T21:10:39.804Z",
+  "is_new": true,
+  "source_url": "https://resources.hse.gov.uk/notices/notices/notice_details.asp?SF=CN&SV=314719061",
+  "recordType": "notice",
+  "noticeNumber": "314719061",
+  "recipientName": "Llanelec Precision Engineering Company Limited",
+  "noticeType": "Improvement Notice",
+  "servedDateIso": "2024-12-05",
+  "complianceDateIso": "2025-03-03",
+  "result": "Complied with",
+  "region": "Wales & South West",
+  "industry": "Manufacturing"
+}
+```
+
 ## Pricing (Pay-Per-Event)
 
 Pay per event, platform usage included - you pay only for records delivered, never for compute:
