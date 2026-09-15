@@ -3,7 +3,7 @@ import { Actor, log } from 'apify';
 import { Delivery } from './delivery.js';
 import type { Candidate, WalkResult } from './fetchRecords.js';
 import { recheckKnown, selectRecheckIds, walkListing } from './fetchRecords.js';
-import { setMaxInFlightRequests } from './http.js';
+import { setMaxInFlightRequests, UpstreamOutageError } from './http.js';
 import type { RunOptions } from './input.js';
 import { resolveInput } from './input.js';
 import { lowestRecordId, siteCalendarDate } from './normalize.js';
@@ -339,9 +339,25 @@ await Actor.init();
 try {
     await run();
 } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    log.exception(error instanceof Error ? error : new Error(message), 'Run failed');
-    await Actor.setValue('LAST_ERROR', { message, at: new Date().toISOString() });
-    await Actor.fail(`HSE extraction failed: ${message}`);
+    if (error instanceof UpstreamOutageError) {
+        // Expected, well-classified external condition - not an unhandled
+        // rejection or a code regression, so this is `log.error`, not
+        // `log.exception` (which would misreport it as an internal bug).
+        log.error(error.message, { host: error.host, address: error.address, networkCode: error.networkCode });
+        await Actor.setValue('LAST_ERROR', {
+            type: 'UPSTREAM_OUTAGE',
+            message: error.message,
+            host: error.host,
+            address: error.address,
+            networkCode: error.networkCode,
+            at: new Date().toISOString(),
+        });
+        await Actor.fail(error.message);
+    } else {
+        const message = error instanceof Error ? error.message : String(error);
+        log.exception(error instanceof Error ? error : new Error(message), 'Run failed');
+        await Actor.setValue('LAST_ERROR', { type: 'CODE_ERROR', message, at: new Date().toISOString() });
+        await Actor.fail(`HSE extraction failed: ${message}`);
+    }
 }
 await Actor.exit();

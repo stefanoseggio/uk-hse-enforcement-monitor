@@ -24,6 +24,61 @@ export class HttpError extends Error {
     }
 }
 
+/** The three low-level connect-phase error codes that mean "the target host itself is unreachable", as opposed to a slow or malformed response from a reachable one. */
+const OUTAGE_NETWORK_CODES = new Set(['EHOSTUNREACH', 'ECONNREFUSED', 'ETIMEDOUT']);
+
+/**
+ * Node's native fetch (undici) throws `TypeError('fetch failed', { cause })`
+ * on a connect-phase failure, where `cause` is the raw Node.js system error -
+ * a plain object (not always `instanceof Error`) carrying `.code`, and for
+ * connect errors specifically, `.address`/`.port`.
+ */
+function networkErrorCause(error: unknown): Record<string, unknown> | undefined {
+    if (!(error instanceof Error)) return undefined;
+    const { cause } = error as { cause?: unknown };
+    return cause && typeof cause === 'object' ? (cause as Record<string, unknown>) : undefined;
+}
+
+function networkErrorCode(error: unknown): string | undefined {
+    const { code } = networkErrorCause(error) ?? {};
+    return typeof code === 'string' ? code : undefined;
+}
+
+function networkErrorAddress(error: unknown): string | undefined {
+    const { address } = networkErrorCause(error) ?? {};
+    return typeof address === 'string' ? address : undefined;
+}
+
+/**
+ * Thrown by `fetchWithRetry` in place of the raw network error once retries
+ * are exhausted, when the underlying failure is one of `OUTAGE_NETWORK_CODES`.
+ * Lets `main.ts` classify "the HSE register itself is unreachable" separately
+ * from an actual code regression (a selector break, a schema change, an
+ * unhandled promise rejection) - both currently surface as a generic "Run
+ * failed" otherwise, which reads identically to a real bug in this Actor's
+ * own code when it is not one.
+ */
+export class UpstreamOutageError extends Error {
+    constructor(
+        public readonly host: string,
+        public readonly address: string | undefined,
+        public readonly networkCode: string,
+        public override readonly cause: Error,
+    ) {
+        super(
+            `[UPSTREAM_OUTAGE] UK HSE register target (${host}${address ? ` / ${address}` : ''}) is unreachable at network level (${networkCode}). Outage is external to Actor codebase.`,
+        );
+        this.name = 'UpstreamOutageError';
+    }
+}
+
+/** Wraps `error` as `UpstreamOutageError` when its cause is a connect-phase outage code; otherwise returns it unchanged. Exported for direct unit testing (see test/http.test.ts) without needing to mock global fetch. */
+export function classifyFinalError(error: Error, url: string): Error {
+    const code = networkErrorCode(error);
+    if (!code || !OUTAGE_NETWORK_CODES.has(code)) return error;
+    return new UpstreamOutageError(new URL(url).host, networkErrorAddress(error), code, error);
+}
+
 export interface FetchOptions {
     maxRetries?: number;
     baseDelayMs?: number;
@@ -136,7 +191,7 @@ export async function fetchWithRetry(path: string, options: FetchOptions = {}): 
             await sleep(delay);
         }
     }
-    throw lastError;
+    throw classifyFinalError(lastError, url);
 }
 
 /** Retries before a 500 on a record page is taken as "record missing" (3 attempts over ~3 s). */
