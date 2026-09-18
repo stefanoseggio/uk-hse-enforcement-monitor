@@ -110,6 +110,61 @@ for (const item of items) {
 
 Or run it straight from the [Actor page](https://apify.com/stefano_seggio/uk-hse-enforcement-monitor) with no code at all - paste the same input into the web UI and hit Start. Full, runnable copies of the Node.js and Python examples above live in this repo under [`examples/`](examples) (`call-actor.cjs`, `call_actor.py`).
 
+## Use this from Claude Desktop, Cursor, or Windsurf (via MCP)
+
+This Actor is also reachable as an MCP tool through Apify's own hosted `@apify/actors-mcp-server`, scoped to just this one Actor via a `?tools=` query string — not the full fleet. Get a token from [Apify Console → Settings → Integrations](https://console.apify.com/settings/integrations) first.
+
+**Claude Desktop** (`%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS) — uses the `mcp-remote` stdio bridge. Note: `mcp-remote` does not expand shell environment variables inside the JSON string, so paste the literal token in place of `${APIFY_TOKEN}` below, and keep this file out of version control.
+
+```json
+{
+  "mcpServers": {
+    "delta-registry-uk-hse-enforcement-monitor": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.apify.com/?tools=stefano_seggio/uk-hse-enforcement-monitor",
+        "--header",
+        "Authorization: Bearer ${APIFY_TOKEN}"
+      ]
+    }
+  }
+}
+```
+
+**Cursor** (`.cursor/mcp.json` or `~/.cursor/mcp.json`) — native HTTP transport:
+
+```json
+{
+  "mcpServers": {
+    "delta-registry-uk-hse-enforcement-monitor": {
+      "url": "https://mcp.apify.com/?tools=stefano_seggio/uk-hse-enforcement-monitor",
+      "headers": {
+        "Authorization": "Bearer ${APIFY_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+**Windsurf** (`~/.codeium/windsurf/mcp_config.json`) — uses `serverUrl`, not `url`. Windsurf's `${env:...}` syntax genuinely does resolve from the environment, unlike Claude Desktop's config above:
+
+```json
+{
+  "mcpServers": {
+    "delta-registry-uk-hse-enforcement-monitor": {
+      "serverUrl": "https://mcp.apify.com/?tools=stefano_seggio/uk-hse-enforcement-monitor",
+      "headers": {
+        "Authorization": "Bearer ${env:APIFY_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Want the full 28-actor fleet in one closed-scope config instead of just this Actor? See [`MCP_INTEGRATION.md`](https://github.com/stefanoseggio/delta-registry-website/blob/main/MCP_INTEGRATION.md) in the `delta-registry-website` repo.
+
 ## Input & Output Schema
 
 ### Input
@@ -143,10 +198,11 @@ Every filter below is applied server-side by the HSE register itself, so a narro
 | `maxItemsPerDataset` | integer | `100` | Hard cap on delivered records per register per run (and on cost), 1-100,000. |
 | `fetchDetail` / `fetchBreachDetail` / `fetchPartyDetail` | boolean | `true` | Which extra pages to open per record - case/notice detail, per-breach legislation, and the defendant/recipient's own profile and history. |
 | `maxConcurrency` | integer | `5` | Run-wide cap on simultaneous HTTP requests to the register. |
+| `dateRange` | string | - | Legacy (v1), hidden from the input UI: `"24h"`, `"7d"` or `"30d"`, interpreted as `dateFrom`. Kept for tasks created before `dateFrom`/`dateTo` existed. |
 
 ### Output
 
-One record per conviction or notice, with raw site strings kept next to normalised twins. A real notice record (fields trimmed for length - every record carries 90+ fields):
+One record per conviction or notice, with raw site strings kept next to normalised twins. A real notice record (fields trimmed for length - every record carries 86 fields, per `.actor/dataset_schema.json`):
 
 ```json
 {
