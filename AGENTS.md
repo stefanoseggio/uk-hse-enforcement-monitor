@@ -305,7 +305,21 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
    (`assertNotFoundWithinBounds`, every failure kind counts): >= 30%
    failures of a sample of >= 10 detail fetches, or >= 5 in a row (carried
    across delivery batches), throws -> `Actor.fail`, nothing stored or
-   remembered. Tests: `test/main.missingDetail.test.ts`.
+   remembered. The new-record detail-fetch guard (`delivery.ts`) checks the
+   ratio twice per batch - once against that batch's own attempted/failed
+   counts, once against the running totals accumulated over the whole
+   delivery queue - so a sustained partial-outage failure rate that never
+   clears 30% within any single ~15-record batch (e.g. because most of a
+   batch's candidates already carry a pre-fetched detail page and so are
+   never "attempted") still trips once the cumulative sample passes 10.
+   `recheckKnown`'s re-check guard additionally trips (`allFailedIsSuspicious`)
+   whenever every attempted re-check in a batch failed, however small the
+   batch - a small `recheckDays` window can otherwise never reach the
+   10-sample ratio, letting a multi-day outage return NOT_FOUND for every
+   open record without ever being caught, risking a false
+   `MISSING_RUNS_BEFORE_CLOSED` closure. Tests: `test/main.missingDetail.test.ts`,
+   `test/delivery.test.ts` (cumulative queue-wide accumulation),
+   `test/walkListing.test.ts` (small all-failed re-check batch).
 10. The delta store fingerprint covers server-side filters only - never
     `eventTypes` (rows dropped by event type are marked seen anyway, so a
     later change of `eventTypes` must not re-baseline a running task).

@@ -65,6 +65,14 @@ export class Delivery {
         let truncatedByMaxItems = false;
         let deferredMissingDetail = 0;
         let consecutiveNotFound = 0;
+        // Accumulated across the whole delivery queue (every batch of this
+        // call), in addition to the per-batch counts below: a sustained
+        // partial outage failing an evenly-distributed share of detail
+        // fetches (e.g. ~20-29%) can stay under the 30% ratio in every
+        // individual batch while clearing it comfortably over the run as a
+        // whole, so the cumulative totals must be checked too.
+        let totalAttempted = 0;
+        let totalFailed = 0;
         const droppedByEventType: string[] = [];
         const storedIds = new Set<string>();
         let offset = 0;
@@ -103,7 +111,16 @@ export class Delivery {
                         consecutiveNotFound = 0;
                     }
                 }
+                totalAttempted += attempted;
+                totalFailed += failed;
                 assertNotFoundWithinBounds(register, attempted, failed, longestStreak, 'detail fetch');
+                assertNotFoundWithinBounds(
+                    register,
+                    totalAttempted,
+                    totalFailed,
+                    consecutiveNotFound,
+                    'detail fetch (run total)',
+                );
             }
 
             // Charge the full price only for records that really carry breach detail.
