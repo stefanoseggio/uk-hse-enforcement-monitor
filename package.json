@@ -1,6 +1,6 @@
 {
     "name": "uk-hse-enforcement-monitor",
-    "version": "2.0.1",
+    "version": "2.1.0",
     "type": "module",
     "description": "UK HSE Enforcement Monitor: scrape and monitor the Health and Safety Executive public registers of convictions (prosecutions, fines, breaches, courts) and enforcement notices (Improvement and Prohibition notices) on resources.hse.gov.uk - server-side filters, delta mode with NEW/UPDATED events, ISO dates, numeric GBP, defendant status and repeat-offender signals.",
     "engines": {
