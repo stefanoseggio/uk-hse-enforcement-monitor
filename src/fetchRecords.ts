@@ -466,10 +466,24 @@ export function assertNotFoundWithinBounds(
     failed: number,
     consecutive: number,
     context: string,
+    options?: {
+        /**
+         * A small re-check batch (fewer open records fall inside
+         * `recheckDays` than `minSample`) never reaches the 10-sample ratio
+         * threshold, so a sustained outage could return NOT_FOUND for every
+         * one of them, run after run, without ever tripping the guard. When
+         * set, a batch where every attempted fetch failed is treated as
+         * suspicious regardless of its size (below `minSample` this adds
+         * coverage; at or above it the ratio check already covers a 100%
+         * failure, so this is a no-op there).
+         */
+        allFailedIsSuspicious?: boolean;
+    },
 ): void {
     const tooMany = attempted >= NOT_FOUND_GUARD.minSample && failed / attempted >= NOT_FOUND_GUARD.ratio;
     const streak = consecutive >= NOT_FOUND_GUARD.maxConsecutive;
-    if (!tooMany && !streak) return;
+    const allFailedSmallBatch = Boolean(options?.allFailedIsSuspicious) && attempted >= 1 && failed === attempted;
+    if (!tooMany && !streak && !allFailedSmallBatch) return;
     throw new Error(
         `HSE ${register} ${context}: ${failed} of ${attempted} record page(s) could not be read (${consecutive} in a row: the site's "unknown id" 500, a timeout or a non-record page) although the register lists them - treating this as a site outage, not as withdrawals. Aborting so no record is stubbed or dropped; the next run retries.`,
     );
@@ -501,6 +515,12 @@ export async function recheckKnown(
         details.filter((d) => d.error !== null).length,
         longestNotFoundStreak(details.map((d) => d.error)),
         're-check of known open records',
+        // A small re-check batch (few open records inside recheckDays) can
+        // never reach the 10-sample ratio threshold; a 100% failure of even
+        // a tiny batch is as suspicious as a large one, since a genuine
+        // multi-day outage could otherwise return NOT_FOUND for all of them
+        // across two runs and risk a false MISSING_RUNS_BEFORE_CLOSED closure.
+        { allFailedIsSuspicious: true },
     );
     details.forEach((d, i) => {
         const id = ids[i];
