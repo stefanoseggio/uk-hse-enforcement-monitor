@@ -1,4 +1,5 @@
-import type { CheerioAPI, Element } from 'cheerio';
+import type { CheerioAPI } from 'cheerio';
+import type { Element } from 'domhandler';
 
 // Both the conviction/notice detail pages and the per-breach detail page
 // share one shape: a table of <tr>s, most holding one or two label/value
