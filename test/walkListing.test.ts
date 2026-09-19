@@ -433,6 +433,47 @@ describe('UPDATED detection through content hashes (the register has no timestam
         expect(longestNotFoundStreak(['NOT_FOUND', 'timeout', 'NOT_A_DETAIL_PAGE', null])).toBe(3);
     });
 
+    it('with allFailedIsSuspicious, a small batch (below minSample) where every attempt failed also trips - but only when opted in', () => {
+        // Below minSample=10 and below the 5-streak: neither existing threshold
+        // fires by default, so a small re-check batch could ride out a multi-day
+        // outage undetected unless this additional rule is opted into.
+        expect(() => assertNotFoundWithinBounds('notices', 2, 2, 2, 'x')).not.toThrow();
+        expect(() => assertNotFoundWithinBounds('notices', 2, 2, 2, 'x', { allFailedIsSuspicious: true })).toThrow(
+            /site outage/,
+        );
+        // Not all failed -> still fine even when opted in.
+        expect(() =>
+            assertNotFoundWithinBounds('notices', 2, 1, 1, 'x', { allFailedIsSuspicious: true }),
+        ).not.toThrow();
+        // A single re-checked record that vanished is the ordinary "one withdrawal" case, not an outage.
+        expect(() =>
+            assertNotFoundWithinBounds('notices', 1, 1, 1, 'x', { allFailedIsSuspicious: false }),
+        ).not.toThrow();
+        expect(() =>
+            assertNotFoundWithinBounds('notices', 1, 1, 1, 'x', { allFailedIsSuspicious: true }),
+        ).toThrow(/site outage/);
+        // At/above minSample, opting in changes nothing: the ratio check already covers a 100% failure.
+        expect(() =>
+            assertNotFoundWithinBounds('notices', 10, 10, 1, 'x', { allFailedIsSuspicious: true }),
+        ).toThrow(/site outage/);
+    });
+
+    it('recheckKnown FAILS a small re-check batch (below minSample) where every attempted re-check vanished', async () => {
+        // A genuine multi-day outage could otherwise return NOT_FOUND for every
+        // open record inside a small recheckDays window without ever reaching
+        // the 10-sample ratio or the 5-in-a-row streak - risking a false
+        // MISSING_RUNS_BEFORE_CLOSED closure instead of being caught as an outage.
+        fetchOptionalMock.mockResolvedValue(null);
+        const seen: Record<string, StateEntry> = { a: entry(), b: entry() };
+        await expect(recheckKnown('notices', ['a', 'b'], seen, 2)).rejects.toThrow(/site outage/);
+
+        // One of two surviving is an ordinary withdrawal, not an outage.
+        const complied = fx('notice_detail_315474881_complied.html');
+        fetchOptionalMock.mockImplementation(async (path) => (path.includes('SV=a') ? null : complied));
+        const result = await recheckKnown('notices', ['a', 'b'], seen, 2);
+        expect(result.vanished).toEqual(['a']);
+    });
+
     it('re-check counts timeouts and non-record pages in the outage guard, and keeps such records re-checkable', async () => {
         const seen: Record<string, StateEntry> = {};
         const ids = Array.from({ length: 10 }, (_v, i) => String(316000100 + i));
