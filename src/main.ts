@@ -96,7 +96,7 @@ async function processRegister(
                 await delivery.persist();
             }
             log.info(
-                `${register}: baseline set at ${baseline ?? 'n/a'} - this first delta run delivers the ${walk.candidates.length} most recently entered matching record(s); the matching records below it (${matched} match in total) are history and later delta runs deliver only what is entered above it (run once with onlyNew=false for the full history).`,
+                `${register}: baseline set at ${baseline ?? 'n/a'} - this first delta run delivers the ${walk.candidates.length} most recently entered matching record(s); the matching records below it (${matched} match in total) are history and later delta runs deliver only what is entered above it (run onlyNew=false - repeatedly, or with narrower filters, if the register is bigger than one capped run - for the full history).`,
             );
         } else {
             log.info(

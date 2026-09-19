@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 
 import { ROBOTS_DISALLOWED_CASE_NUMBERS } from './codes.js';
 import { fetchOptional, fetchWithRetry, mapWithConcurrency } from './http.js';
+import { MAX_ITEMS_HARD_CAP } from './input.js';
 import {
     addDays,
     classifyBreachResult,
@@ -345,7 +346,7 @@ export async function walkListing(options: WalkOptions): Promise<WalkResult> {
                 let catchUp = 'raise the cap or narrow the filters to get more in one run';
                 if (onlyNew && cold) {
                     catchUp =
-                        'this first delta run defines the baseline: the older records below the cap are history and are never delivered by later delta runs - raise the cap now for a deeper baseline, or run once with onlyNew=false for the full history';
+                        `this first delta run defines the baseline: the older records below the cap are history and are never delivered by later delta runs - raise the cap (up to ${MAX_ITEMS_HARD_CAP}) now for a deeper baseline, or run onlyNew=false (repeatedly, or with narrower filters, if the register is bigger than one capped run) for the full history`;
                 } else if (onlyNew) {
                     catchUp =
                         'the walk watermark makes the next delta run walk down to it instead of early-stopping on the records delivered today; raise the cap to catch up faster';

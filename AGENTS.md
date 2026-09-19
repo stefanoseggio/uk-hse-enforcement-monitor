@@ -381,6 +381,55 @@ Record()` / `buildNoticeRecord()` (all normalisation), `detailContentHash()`.
   baseline floor the same input delivered 4 pre-baseline notices per run
   until all 63 had been charged.
 
+## Timeout-budget fix (2026-09-19)
+
+`defaultRunOptions.timeoutSecs` is 3,600 (confirmed live via `GET
+/v2/acts/stefano_seggio~uk-hse-enforcement-monitor`, 2026-09-19). `onlyNew:
+false` has no early-stop (the delta-early-stop block in `walkListing` is
+gated on `onlyNew`), so with a high `maxItemsPerDataset` the walk visits
+essentially one candidate per listing row until the cap or the register end.
+On the notices register (~30,226 records per the 2026-09-07 live count above,
+`RESULTS_PER_PAGE = 10` -> ~3,023 pages) walked **strictly sequentially, one
+page per HTTP round trip** (`walkListing`'s `for (;;)` loop `await`s each
+page before requesting the next), that is already 3,023 x 2.5s (the
+documented per-page ceiling, "Pages answer in 0.3-2.5 s" above) = 7,558s -
+2.1x the timeout, using zero retries and before a single record's detail
+page is fetched. Full enrichment (`fetchDetail`/`fetchBreachDetail`/
+`fetchPartyDetail`, all default `true`) then adds up to 5 more requests per
+notice (detail page, breach list, party page, party's 2 history lists),
+throttled through the same `maxConcurrency`-wide semaphore (default 5): at
+the same 2.5s ceiling that is ~2.5s of wall-clock time per delivered record,
+on top of the walk's ~0.25s/record. Combined, a run risks exceeding the
+timeout - and because records are only stored after `walkListing` returns
+for that register (`processRegister` calls `delivery.deliver` once, after
+the whole walk), a run that times out mid-walk delivers **nothing**, not
+just the tail.
+
+Fix: `MAX_ITEMS_HARD_CAP` (`src/input.ts`) and `.actor/input_schema.json`'s
+`maxItemsPerDataset.maximum` are both capped at 900 (was 100,000) -
+900 x ~2.75s/record (walk + full enrichment, derived above) =~ 2,475s, ~69%
+of the real 3,600s timeout. The convictions register (~210 records) is
+unaffected - it was always far under any cap. Getting more than 900 records
+of notices history in one filter set now takes more than one `onlyNew:
+false` run (each still returns up to the cap) or narrower filters
+(`dateFrom`/`dateTo`, region, industry, ...) - the `maxItemsPerDataset`
+description, the README table and the "raise the cap" log messages in
+`fetchRecords.ts`/`main.ts` were updated to stop suggesting a single very
+high cap gets the full history in one run.
+
+Not changed in this fix (considered and rejected as out of scope for a
+single, testable change): (1) raising `timeoutSecs` itself - the honest
+full-history workload (30k+ notices, fully enriched) needs single-digit
+hours even at the fastest documented per-request latency, which is not a
+reasonable Actor run length to request via the Apify API; (2) tightening
+`http.ts`'s `DEFAULTS` retry/backoff - they were not the dominant cost here
+(the budget is blown by sheer request COUNT at normal latency, not by
+retries); (3) incremental per-page delivery during the walk itself - it
+would make a very large `onlyNew: false` run resumable across runs instead
+of just capped, which is real future value, but is a materially bigger
+change to the walk/delivery split than this bug needs now that the input
+that could trigger it is capped inside the timeout with margin.
+
 ## Known scope limits (disclosed in the README)
 
 - `UPDATED` says the record's page changed, not WHAT changed (no field-level

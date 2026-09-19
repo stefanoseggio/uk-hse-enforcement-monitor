@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveDate, resolveInput } from '../src/input.js';
+import { MAX_ITEMS_HARD_CAP, resolveDate, resolveInput } from '../src/input.js';
 
 const NOW = new Date('2026-09-07T12:00:00.000Z'); // 13:00 BST on 7 Sep in London
 
@@ -110,9 +110,9 @@ describe('resolveInput', () => {
     });
 
     it('honours the legacy dateRange preset and keeps existing input names working', () => {
-        const r = resolveInput({ dateRange: '7d', maxItemsPerDataset: 5000, fetchBreachDetail: false }, NOW);
+        const r = resolveInput({ dateRange: '7d', maxItemsPerDataset: 500, fetchBreachDetail: false }, NOW);
         expect(r.queries.convictions.criteria).toEqual([{ sf: 'ODS', sn: 'F', eo: '>', sv: '30/08/2026' }]);
-        expect(r.options.maxItems).toBe(5000);
+        expect(r.options.maxItems).toBe(500);
         expect(r.options.fetchBreachDetail).toBe(false);
         expect(r.options.fetchDetail).toBe(true);
     });
@@ -136,13 +136,30 @@ describe('resolveInput', () => {
 
     it('clamps performance knobs to safe ranges and ties breach/party fetches to fetchDetail', () => {
         const r = resolveInput({ maxItemsPerDataset: 10_000_000, maxConcurrency: 99, recheckDays: 99_999 }, NOW);
-        expect(r.options.maxItems).toBe(100_000);
+        expect(r.options.maxItems).toBe(MAX_ITEMS_HARD_CAP);
         expect(r.options.maxConcurrency).toBe(10);
         expect(r.options.recheckDays).toBe(3650);
         expect(resolveInput({ maxConcurrency: 0 }, NOW).options.maxConcurrency).toBe(1);
         const listingOnly = resolveInput({ fetchDetail: false }, NOW).options;
         expect(listingOnly.fetchBreachDetail).toBe(false);
         expect(listingOnly.fetchPartyDetail).toBe(false);
+    });
+
+    it('caps maxItemsPerDataset at the timeout-budget ceiling (boundary: cap value passes through unchanged, cap+1 is clamped down)', () => {
+        // Timeout-budget bug fix: onlyNew=false has no early-stop, so on the
+        // ~30,000-record / ~3,023-page notices register the walk+enrichment
+        // time scales with maxItems almost 1:1 (see MAX_ITEMS_HARD_CAP's
+        // derivation in src/input.ts) - the cap must hold exactly at the
+        // computed ceiling, not silently drift.
+        expect(resolveInput({ maxItemsPerDataset: MAX_ITEMS_HARD_CAP }, NOW).options.maxItems).toBe(
+            MAX_ITEMS_HARD_CAP,
+        );
+        expect(resolveInput({ maxItemsPerDataset: MAX_ITEMS_HARD_CAP + 1 }, NOW).options.maxItems).toBe(
+            MAX_ITEMS_HARD_CAP,
+        );
+        expect(resolveInput({ maxItemsPerDataset: MAX_ITEMS_HARD_CAP - 1 }, NOW).options.maxItems).toBe(
+            MAX_ITEMS_HARD_CAP - 1,
+        );
     });
 
     it('derives the delta store from the filter set only - not from dates, limits, fetch flags or registers', () => {
