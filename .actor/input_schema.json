@@ -352,11 +352,11 @@
             "sectionCaption": "Limits & performance",
             "title": "Max records per register",
             "type": "integer",
-            "description": "Hard cap on delivered records per selected register (and therefore on cost: you pay per record). On the very first delta run the cap defines the baseline: the oldest record that run delivers is remembered per register, and records entered before it are history - later delta runs never deliver or charge for them, whatever the cap (run once with onlyNew=false, or set a high cap on the first run, if you want the history). On every later delta run the overflow is a backlog: the walk remembers where it stopped (a per-register watermark in the delta memory) and the next run walks down to that point instead of stopping at the records already delivered.",
+            "description": "Hard cap on delivered records per selected register (and therefore on cost: you pay per record). Capped at 900: with the default fetchDetail/fetchBreachDetail/fetchPartyDetail (up to 5 requests per notice) and the run's 3,600s timeout, walking and enriching more than that in one run risks not finishing (the notices register alone is ~30,000 records / ~3,023 listing pages, walked strictly one page at a time). For deeper history than one run's cap allows, run onlyNew=false more than once (each run still returns up to the cap) or narrow the filters (e.g. dateFrom/dateTo) so fewer records match per run. On the very first delta run the cap defines the baseline: the oldest record that run delivers is remembered per register, and records entered before it are history - later delta runs never deliver or charge for them, whatever the cap. On every later delta run the overflow is a backlog: the walk remembers where it stopped (a per-register watermark in the delta memory) and the next run walks down to that point instead of stopping at the records already delivered.",
             "editor": "number",
             "default": 100,
             "minimum": 1,
-            "maximum": 100000,
+            "maximum": 900,
             "unit": "records"
         },
         "fetchDetail": {
