@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.1.0](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/compare/uk-hse-enforcement-monitor-v2.0.1...uk-hse-enforcement-monitor-v2.1.0) (2026-09-19)
+
+
+### Features
+
+* delta engine (onlyNew/dateRange) + standardized B2B output envelope ([b469957](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/b469957cbcea8e07e57c53051430b64622739b2e))
+* UK HSE Enforcement Monitor - Convictions + Notices registers ([18eb429](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/18eb429191b447181684c1ce2fac5529e84aaf9b))
+* v2.0.0 - server-side filters, content-hash delta engine with UPDATED events, party profiles, normalised fields ([bd2965b](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/bd2965b2a7d5c89c580c9a871d43b8fcfe6ad16d))
+
+
+### Bug Fixes
+
+* accept the 8-column Improvement listing, correct notice-type labels and SIC column, make missing pages non-final ([c8ff9fd](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/c8ff9fd5968324d29a6cfb045c0828d20c210383))
+* cap maxItemsPerDataset so a full onlyNew=false walk fits the timeout ([#10](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/issues/10)) ([fa87791](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/fa8779143cba8dac887ccd710ff88b9f14261992))
+* **ci:** pass RELEASE_PLEASE_TOKEN so release PRs skip the bot-approval gate ([b5bd525](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/b5bd52536fab646a8242b6a71749729f29ce538e))
+* close two outage-guard blind spots (cumulative ratio, small re-check batches) ([#11](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/issues/11)) ([232d17a](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/232d17af7120303b33a17a45d2c41916b1398ad2))
+* **delta:** cold-cap baseline floor, truthful delivery truncation, spaced postcodes ([78a1abc](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/78a1abc51b1e9f5c88d90aff5519250cb3f1d094))
+* **delta:** walk watermark so a capped notices walk never strands its overflow; truthful SIC docs; defer every unreadable detail page ([01948f6](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/01948f6b72c206aef763749ce2363e0d92b0a582))
+* **state:** never adopt the v1 delta store into a v2 delta-state name ([ab26b03](https://github.com/stefanoseggio/uk-hse-enforcement-monitor/commit/ab26b038d4bd62cd25af183f95f6f552ca275ced))
+
 ## 2.0.1 - 2026-09-08
 
 ### Fixed
