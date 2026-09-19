@@ -31,7 +31,25 @@ export interface ResolvedInput {
 const ALL_DATASETS: DatasetName[] = ['convictions', 'notices'];
 const ALL_EVENT_TYPES: EventType[] = ['NEW_LISTING', 'SANCTION', 'UPDATED'];
 
-export const MAX_ITEMS_HARD_CAP = 100_000;
+/**
+ * Timeout-budget bug fix (see AGENTS.md): with onlyNew=false (no early-stop)
+ * and a high cap, the walk visits ~1 candidate/row - so on the notices
+ * register (~30,000 records / RESULTS_PER_PAGE=10 -> ~3,023 pages, walked
+ * strictly one page at a time, see fetchRecords.ts walkListing) the walk
+ * alone can already run past the Actor's 3,600s defaultRunOptions.timeoutSecs
+ * using only the documented per-page ceiling (0.3-2.5s, see http.ts DEFAULTS)
+ * and zero retries: 3,023 pages x 2.5s = 7,558s (2.1x the timeout). Full
+ * enrichment (fetchDetail+fetchBreachDetail+fetchPartyDetail, all default
+ * true) adds up to 5 more HTTP requests per notice (detail + breach list +
+ * party page + party's 2 history lists) throttled through the same
+ * maxConcurrency=5 default limiter (see http.ts Semaphore), so at the same
+ * 2.5s ceiling: walk (~0.25s/record) + enrichment (5 requests / 5 concurrency
+ * x 2.5s = 2.5s/record) ~= 2.75s of real time per delivered record. Capping
+ * at 900 keeps the worst case at 900 x 2.75s =~ 2,475s, ~69% of the real
+ * 3,600s timeoutSecs (verified live via the Apify API 2026-09-19) - inside
+ * the ~70% margin instead of exactly at 100%.
+ */
+export const MAX_ITEMS_HARD_CAP = 900;
 export const MAX_CONCURRENCY_HARD_CAP = 10;
 export const MAX_RECHECK_DAYS = 3650;
 
